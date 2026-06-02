@@ -105,8 +105,14 @@ function shardRow(s, ctx) {
       ${s.reviewEnabled ? '<span class="review-dot">●</span>' : ""}
       <span class="cat">${esc(s.category)}</span>
       ${famBadge(s.familiarity)}
+      <button class="btn mini review-btn" title="Review this card (no answer shown first)">Review</button>
     </div>
   `);
   row.addEventListener("click", () => ctx.openShard(s.id));
+  // Single-card review without opening the editor (which would reveal the answer first).
+  row.querySelector(".review-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    ctx.reviewCard(s.id);
+  });
   return row;
 }

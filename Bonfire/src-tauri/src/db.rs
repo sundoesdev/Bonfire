@@ -1,6 +1,9 @@
-use crate::models::{Shard, VaultExport};
+use crate::models::{Deck, Shard, VaultExport};
 use rusqlite::{params, Connection, Result};
 use uuid::Uuid;
+
+/// Fixed id of the always-present default deck that ungrouped cards fall back to.
+pub const DEFAULT_DECK_ID: &str = "default";
 
 /// Create the schema if it does not already exist.
 pub fn init(conn: &Connection) -> Result<()> {
@@ -32,6 +35,14 @@ pub fn init(conn: &Connection) -> Result<()> {
         CREATE TABLE IF NOT EXISTS settings (
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS decks (
+            id          TEXT PRIMARY KEY,
+            name        TEXT NOT NULL DEFAULT '',
+            preset      TEXT NOT NULL DEFAULT 'code',
+            position    INTEGER NOT NULL DEFAULT 0,
+            created_at  TEXT NOT NULL DEFAULT '',
+            modified_at TEXT NOT NULL DEFAULT ''
         );",
     )?;
     migrate(conn)
@@ -47,6 +58,34 @@ fn migrate(conn: &Connection) -> Result<()> {
     if has_prompt == 0 {
         conn.execute("ALTER TABLE shards ADD COLUMN prompt TEXT NOT NULL DEFAULT ''", [])?;
     }
+
+    // Decks: add the shards.deck_id column, ensure a default deck exists, and
+    // adopt any orphaned cards into it.
+    let has_deck_id: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('shards') WHERE name = 'deck_id'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_deck_id == 0 {
+        conn.execute("ALTER TABLE shards ADD COLUMN deck_id TEXT NOT NULL DEFAULT ''", [])?;
+    }
+    let now = chrono::Local::now().to_rfc3339();
+    conn.execute(
+        "INSERT OR IGNORE INTO decks (id, name, preset, position, created_at, modified_at)
+         VALUES (?1, 'Default', 'code', 0, ?2, ?2)",
+        params![DEFAULT_DECK_ID, now],
+    )?;
+    // Rename the original auto-named default deck ("Code") to "Default" for vaults
+    // created before the rename — but leave it alone if the user renamed it themselves.
+    conn.execute(
+        "UPDATE decks SET name = 'Default' WHERE id = ?1 AND name = 'Code'",
+        params![DEFAULT_DECK_ID],
+    )?;
+    conn.execute(
+        "UPDATE shards SET deck_id = ?1
+         WHERE deck_id = '' OR deck_id IS NULL OR deck_id NOT IN (SELECT id FROM decks)",
+        params![DEFAULT_DECK_ID],
+    )?;
     Ok(())
 }
 
@@ -103,6 +142,7 @@ fn row_to_shard(row: &rusqlite::Row) -> Result<Shard> {
         prompt: row.get("prompt")?,
         code: row.get("code")?,
         description: row.get("description")?,
+        deck_id: row.get("deck_id")?,
         tags: serde_json::from_str(&tags_json).unwrap_or_default(),
         category: row.get("category")?,
         familiarity: row.get("familiarity")?,
@@ -141,17 +181,17 @@ pub fn save_shard(conn: &Connection, s: &Shard) -> Result<()> {
     let tags = serde_json::to_string(&s.tags).unwrap_or_else(|_| "[]".into());
     let related = serde_json::to_string(&s.related_ids).unwrap_or_else(|_| "[]".into());
     conn.execute(
-        "INSERT INTO shards (id, title, language, prompt, code, description, tags, category,
+        "INSERT INTO shards (id, title, language, prompt, code, description, deck_id, tags, category,
             familiarity, source, related_ids, created_at, modified_at, last_reviewed,
             review_enabled, review_interval, review_reps, review_ease, review_next)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)
          ON CONFLICT(id) DO UPDATE SET
-            title=?2, language=?3, prompt=?4, code=?5, description=?6, tags=?7, category=?8,
-            familiarity=?9, source=?10, related_ids=?11, created_at=?12, modified_at=?13,
-            last_reviewed=?14, review_enabled=?15, review_interval=?16, review_reps=?17,
-            review_ease=?18, review_next=?19",
+            title=?2, language=?3, prompt=?4, code=?5, description=?6, deck_id=?7, tags=?8, category=?9,
+            familiarity=?10, source=?11, related_ids=?12, created_at=?13, modified_at=?14,
+            last_reviewed=?15, review_enabled=?16, review_interval=?17, review_reps=?18,
+            review_ease=?19, review_next=?20",
         params![
-            s.id, s.title, s.language, s.prompt, s.code, s.description, tags, s.category,
+            s.id, s.title, s.language, s.prompt, s.code, s.description, s.deck_id, tags, s.category,
             s.familiarity, s.source, related, s.created_at, s.modified_at, s.last_reviewed,
             s.review_enabled as i64, s.review_interval, s.review_repetitions, s.review_ease,
             s.review_next,
@@ -169,6 +209,54 @@ pub fn delete_shard(conn: &Connection, id: &str) -> Result<()> {
 pub fn delete_all_shards(conn: &Connection) -> Result<usize> {
     let n = conn.execute("DELETE FROM shards", [])?;
     Ok(n)
+}
+
+fn row_to_deck(row: &rusqlite::Row) -> Result<Deck> {
+    Ok(Deck {
+        id: row.get("id")?,
+        name: row.get("name")?,
+        preset: row.get("preset")?,
+        position: row.get("position")?,
+        created_at: row.get("created_at")?,
+        modified_at: row.get("modified_at")?,
+    })
+}
+
+/// All decks, ordered for the switcher (by position, then name).
+pub fn all_decks(conn: &Connection) -> Result<Vec<Deck>> {
+    let mut stmt = conn.prepare("SELECT * FROM decks ORDER BY position, name")?;
+    let rows = stmt.query_map([], row_to_deck)?;
+    rows.collect()
+}
+
+pub fn get_deck(conn: &Connection, id: &str) -> Result<Option<Deck>> {
+    let mut stmt = conn.prepare("SELECT * FROM decks WHERE id = ?1")?;
+    let mut rows = stmt.query_map(params![id], row_to_deck)?;
+    match rows.next() {
+        Some(r) => Ok(Some(r?)),
+        None => Ok(None),
+    }
+}
+
+/// Insert or update a deck (upsert on primary key).
+pub fn save_deck(conn: &Connection, d: &Deck) -> Result<()> {
+    conn.execute(
+        "INSERT INTO decks (id, name, preset, position, created_at, modified_at)
+         VALUES (?1,?2,?3,?4,?5,?6)
+         ON CONFLICT(id) DO UPDATE SET name=?2, preset=?3, position=?4, created_at=?5, modified_at=?6",
+        params![d.id, d.name, d.preset, d.position, d.created_at, d.modified_at],
+    )?;
+    Ok(())
+}
+
+/// Delete a deck, reassigning its cards to the default deck so none are orphaned.
+pub fn delete_deck(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE shards SET deck_id = ?1 WHERE deck_id = ?2",
+        params![DEFAULT_DECK_ID, id],
+    )?;
+    conn.execute("DELETE FROM decks WHERE id = ?1", params![id])?;
+    Ok(())
 }
 
 pub fn custom_languages(conn: &Connection) -> Result<Vec<String>> {
@@ -195,6 +283,7 @@ pub fn export_json(conn: &Connection) -> Result<String> {
     let export = VaultExport {
         shards: all_shards(conn)?,
         custom_languages: custom_languages(conn)?,
+        decks: all_decks(conn)?,
     };
     Ok(serde_json::to_string_pretty(&export).unwrap_or_else(|_| "{}".into()))
 }
@@ -202,6 +291,12 @@ pub fn export_json(conn: &Connection) -> Result<String> {
 /// Import shards + custom languages from a parsed export.
 /// Existing shard ids are skipped. Returns the number of shards imported.
 pub fn import_export(conn: &Connection, export: &VaultExport) -> Result<usize> {
+    // Decks first, so imported cards can resolve their deck_id.
+    for deck in &export.decks {
+        if get_deck(conn, &deck.id)?.is_none() {
+            save_deck(conn, deck)?;
+        }
+    }
     let mut imported = 0usize;
     for shard in &export.shards {
         if get_shard(conn, &shard.id)?.is_none() {
@@ -212,5 +307,11 @@ pub fn import_export(conn: &Connection, export: &VaultExport) -> Result<usize> {
     for lang in &export.custom_languages {
         add_custom_language(conn, lang)?;
     }
+    // Adopt any card whose deck no longer exists (e.g. older exports) into the default deck.
+    conn.execute(
+        "UPDATE shards SET deck_id = ?1
+         WHERE deck_id = '' OR deck_id IS NULL OR deck_id NOT IN (SELECT id FROM decks)",
+        params![DEFAULT_DECK_ID],
+    )?;
     Ok(imported)
 }

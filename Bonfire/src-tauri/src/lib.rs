@@ -2,7 +2,7 @@ mod db;
 mod models;
 mod sm2;
 
-use models::{Shard, VaultExport};
+use models::{Deck, Shard, VaultExport};
 use rusqlite::Connection;
 use std::sync::Mutex;
 use tauri::{Manager, State};
@@ -41,9 +41,42 @@ fn save_shard(state: State<AppState>, mut shard: Shard) -> Result<Shard, String>
     } else if shard.created_at.is_empty() {
         shard.created_at = now.clone();
     }
+    if shard.deck_id.trim().is_empty() {
+        shard.deck_id = db::DEFAULT_DECK_ID.to_string();
+    }
     shard.modified_at = now;
     with_conn(&state, |c| db::save_shard(c, &shard))?;
     Ok(shard)
+}
+
+#[tauri::command]
+fn list_decks(state: State<AppState>) -> Result<Vec<Deck>, String> {
+    with_conn(&state, |c| db::all_decks(c))
+}
+
+/// Insert or update a deck. A new deck (empty id) gets an id + created_at.
+#[tauri::command]
+fn save_deck(state: State<AppState>, mut deck: Deck) -> Result<Deck, String> {
+    let now = now_iso();
+    if deck.id.trim().is_empty() {
+        deck.id = db::generate_id();
+        deck.created_at = now.clone();
+    } else if deck.created_at.is_empty() {
+        deck.created_at = now.clone();
+    }
+    deck.modified_at = now;
+    with_conn(&state, |c| db::save_deck(c, &deck))?;
+    Ok(deck)
+}
+
+/// Delete a deck; its cards are reassigned to the default deck. The default
+/// deck itself cannot be deleted.
+#[tauri::command]
+fn delete_deck(state: State<AppState>, id: String) -> Result<(), String> {
+    if id == db::DEFAULT_DECK_ID {
+        return Err("The default deck cannot be deleted.".into());
+    }
+    with_conn(&state, |c| db::delete_deck(c, &id))
 }
 
 #[tauri::command]
@@ -153,6 +186,9 @@ pub fn run() {
             save_shard,
             delete_shard,
             delete_all_shards,
+            list_decks,
+            save_deck,
+            delete_deck,
             submit_review,
             mark_reviewed,
             get_setting,

@@ -26,6 +26,7 @@ export function openQuickCapture(ctx) {
   const root = document.querySelector("#modal-root");
   if (root.querySelector(".modal-backdrop")) return; // already open
 
+  const preset = ctx.currentPreset();
   const langs = ctx.languages();
   const langOpts = [`<option value="">(select language)</option>`]
     .concat(langs.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`))
@@ -33,6 +34,11 @@ export function openQuickCapture(ctx) {
   const diffOpts = [`<option value="">(no difficulty)</option>`]
     .concat(DIFFICULTIES.map((d) => `<option value="${d}">${d}</option>`))
     .join("");
+
+  // The Language field only appears for code presets.
+  const languageField = preset.showLanguage
+    ? `<div class="field"><label>Language</label><select id="qc-lang">${langOpts}</select></div>`
+    : "";
 
   const backdrop = el(`
     <div class="modal-backdrop">
@@ -46,10 +52,7 @@ export function openQuickCapture(ctx) {
           <label>Prompt</label>
           <input type="text" id="qc-prompt" placeholder="Optional question text shown during testing" />
         </div>
-        <div class="field">
-          <label>Language</label>
-          <select id="qc-lang">${langOpts}</select>
-        </div>
+        ${languageField}
         <div class="field">
           <label>Difficulty</label>
           <select id="qc-diff">${diffOpts}</select>
@@ -63,8 +66,8 @@ export function openQuickCapture(ctx) {
           <input type="text" id="qc-tags" placeholder="e.g., networking, one-liner" />
         </div>
         <div class="field">
-          <label>Answer (code) *</label>
-          <textarea id="qc-code" class="code-editor" style="min-height:140px" spellcheck="false" placeholder="Paste the answer code here..."></textarea>
+          <label>${esc(preset.answerLabel)} *</label>
+          <textarea id="qc-code" class="code-editor" style="min-height:140px" spellcheck="false" placeholder="${esc(preset.answerPlaceholder)}"></textarea>
         </div>
         <div class="actions">
           <button class="btn btn-tool" id="qc-cancel">Cancel</button>
@@ -118,13 +121,15 @@ export function openQuickCapture(ctx) {
       alert("Title and answer (code) are required.");
       return;
     }
+    const langEl = backdrop.querySelector("#qc-lang"); // absent for non-code presets
     await ctx.api.saveShard({
       id: "",
       title,
       prompt: backdrop.querySelector("#qc-prompt").value.trim(),
-      language: backdrop.querySelector("#qc-lang").value,
+      language: langEl ? langEl.value : "",
       code,
       description: "",
+      deckId: ctx.currentDeckId(),
       tags: parseTags(tagsInput.value),
       category: "snippet",
       familiarity: "fresh",

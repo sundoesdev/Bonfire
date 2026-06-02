@@ -14,6 +14,8 @@ pub struct Shard {
     pub prompt: String,
     pub code: String,
     pub description: String,
+    /// Which deck this card belongs to (empty => migrated to the default deck).
+    pub deck_id: String,
     pub tags: Vec<String>,
     pub category: String,
     pub familiarity: String,
@@ -40,6 +42,7 @@ impl Default for Shard {
             prompt: String::new(),
             code: String::new(),
             description: String::new(),
+            deck_id: String::new(),
             tags: Vec::new(),
             category: "snippet".to_string(),
             familiarity: "fresh".to_string(),
@@ -57,10 +60,39 @@ impl Default for Shard {
     }
 }
 
-/// Shape of the JSON export file: all shards plus the user's custom languages.
+/// A deck groups cards by subject. Its `preset` drives the frontend's field
+/// labels / syntax-highlighting behaviour (see SUBJECT_PRESETS in constants.js).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Deck {
+    pub id: String,
+    pub name: String,
+    /// One of the preset keys (e.g. "code", "prose", "vocab").
+    pub preset: String,
+    /// Sort order in the deck switcher.
+    pub position: i64,
+    pub created_at: String,
+    pub modified_at: String,
+}
+
+impl Default for Deck {
+    fn default() -> Self {
+        Deck {
+            id: String::new(),
+            name: String::new(),
+            preset: "code".to_string(),
+            position: 0,
+            created_at: String::new(),
+            modified_at: String::new(),
+        }
+    }
+}
+
+/// Shape of the JSON export file: all shards, decks, and the user's custom languages.
 #[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct VaultExport {
     pub shards: Vec<Shard>,
     pub custom_languages: Vec<String>,
+    pub decks: Vec<Deck>,
 }

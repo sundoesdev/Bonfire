@@ -24,6 +24,7 @@ function blankShard() {
     prompt: "",
     code: "",
     description: "",
+    deckId: "",
     tags: [],
     category: "snippet",
     familiarity: "fresh",
@@ -58,6 +59,10 @@ export function renderEditor(container, ctx, params = {}) {
   const shard = isNew
     ? blankShard()
     : { ...blankShard(), ...ctx.state.shards.find((s) => s.id === params.id) };
+  if (isNew) shard.deckId = ctx.currentDeckId();
+
+  // The active deck's preset gates code-only fields and relabels the answer.
+  const preset = ctx.currentPreset();
 
   let mode = isNew ? "edit" : "view";
 
@@ -99,7 +104,12 @@ export function renderEditor(container, ctx, params = {}) {
       </div>
     `);
 
-    highlightInto(root.querySelector("#code"), shard.code, shard.language);
+    const codeEl = root.querySelector("#code");
+    if (preset.highlight) {
+      highlightInto(codeEl, shard.code, shard.language);
+    } else {
+      codeEl.textContent = shard.code; // non-code decks: render the answer as plain text
+    }
 
     root.querySelector("#back").addEventListener("click", () => ctx.navigate("library"));
     root.querySelector("#review").addEventListener("click", () => ctx.reviewCard(shard.id));
@@ -146,6 +156,11 @@ export function renderEditor(container, ctx, params = {}) {
       .concat(DIFFICULTIES.map((d) => `<option value="${d}">${d}</option>`))
       .join("");
 
+    // The Language field only appears for code presets.
+    const languageField = preset.showLanguage
+      ? `<label>Language</label>\n          <select id="f-lang">${langOpts}</select>`
+      : "";
+
     const root = el(`
       <div>
         <div class="toolbar">
@@ -159,8 +174,7 @@ export function renderEditor(container, ctx, params = {}) {
           <input type="text" id="f-title" placeholder="Short label or the question, e.g. 'Hello world in C'" value="${esc(shard.title)}" />
           <label>Prompt</label>
           <textarea id="f-prompt" style="min-height:48px" placeholder="Optional: the full task shown during testing">${esc(shard.prompt)}</textarea>
-          <label>Language</label>
-          <select id="f-lang">${langOpts}</select>
+          ${languageField}
           <label>Category</label>
           <select id="f-cat">${catOpts}</select>
           <label>Familiarity</label>
@@ -179,16 +193,16 @@ export function renderEditor(container, ctx, params = {}) {
           <label>Review</label>
           <button type="button" class="btn btn-toggle ${shard.reviewEnabled ? "on" : ""}" id="f-review">Enable Spaced Repetition</button>
         </div>
-        <div class="section-title">Answer (code) *</div>
-        <textarea class="code-editor" id="f-code" spellcheck="false">${esc(shard.code)}</textarea>
+        <div class="section-title">${esc(preset.answerLabel)} *</div>
+        <textarea class="code-editor" id="f-code" spellcheck="false" placeholder="${esc(preset.answerPlaceholder)}">${esc(shard.code)}</textarea>
         <div class="section-title" style="margin-top:12px">Description</div>
         <textarea id="f-desc" style="width:100%;min-height:80px" placeholder="Why does this work? When would you use it?">${esc(shard.description)}</textarea>
       </div>
     `);
 
     enableTab(root.querySelector("#f-code"));
-    const langSel = root.querySelector("#f-lang");
-    langSel.value = shard.language;
+    const langSel = root.querySelector("#f-lang"); // null for non-code presets
+    if (langSel) langSel.value = shard.language;
     const tagsInput = root.querySelector("#f-tags");
     const diffSel = root.querySelector("#f-diff");
     const foundationChk = root.querySelector("#f-foundation");
@@ -219,21 +233,23 @@ export function renderEditor(container, ctx, params = {}) {
       applyControlToField((t) => toggleTag(t, REVEAL_ONLY_TAG, revealChk.checked))
     );
 
-    langSel.addEventListener("change", async () => {
-      if (langSel.value === ADD_CUSTOM) {
-        const name = prompt("New language name:");
-        if (name && name.trim()) {
-          await ctx.api.addCustomLanguage(name.trim());
-          const o = document.createElement("option");
-          o.value = name.trim();
-          o.textContent = name.trim();
-          langSel.insertBefore(o, langSel.querySelector(`option[value="${ADD_CUSTOM}"]`));
-          langSel.value = name.trim();
-        } else {
-          langSel.value = shard.language;
+    if (langSel) {
+      langSel.addEventListener("change", async () => {
+        if (langSel.value === ADD_CUSTOM) {
+          const name = prompt("New language name:");
+          if (name && name.trim()) {
+            await ctx.api.addCustomLanguage(name.trim());
+            const o = document.createElement("option");
+            o.value = name.trim();
+            o.textContent = name.trim();
+            langSel.insertBefore(o, langSel.querySelector(`option[value="${ADD_CUSTOM}"]`));
+            langSel.value = name.trim();
+          } else {
+            langSel.value = shard.language;
+          }
         }
-      }
-    });
+      });
+    }
 
     reviewBtn.addEventListener("click", () => {
       reviewEnabled = !reviewEnabled;
@@ -266,7 +282,7 @@ export function renderEditor(container, ctx, params = {}) {
         ...shard,
         title,
         prompt: root.querySelector("#f-prompt").value.trim(),
-        language: langSel.value === ADD_CUSTOM ? shard.language : langSel.value,
+        language: langSel ? (langSel.value === ADD_CUSTOM ? shard.language : langSel.value) : shard.language,
         category: root.querySelector("#f-cat").value,
         familiarity: root.querySelector("#f-fam").value,
         source: root.querySelector("#f-source").value.trim(),

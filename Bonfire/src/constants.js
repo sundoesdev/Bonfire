@@ -63,6 +63,50 @@ export function hljsLang(lang) {
   return HLJS_LANG[lang] || null;
 }
 
+// ---- Subject presets ----
+// A deck's `preset` drives how the editor/capture forms and study/view panes
+// behave, so Bonfire stays developer-first but can also hold non-code decks
+// (world history, vocab, etc.). `code` is the default; existing cards live in
+// the default "Code" deck. `showLanguage`/`highlight` gate the code-only bits;
+// `answerLabel`/`answerPlaceholder` relabel the answer field.
+export const DEFAULT_DECK_ID = "default";
+export const DEFAULT_PRESET = "code";
+
+export const SUBJECT_PRESETS = {
+  code: {
+    label: "Code",
+    showLanguage: true,
+    highlight: true,
+    answerLabel: "Answer (code)",
+    answerPlaceholder: "Paste the answer code here...",
+  },
+  prose: {
+    label: "General / Notes",
+    showLanguage: false,
+    highlight: false,
+    answerLabel: "Answer",
+    answerPlaceholder: "The answer...",
+  },
+  vocab: {
+    label: "Language / Vocab",
+    showLanguage: false,
+    highlight: false,
+    answerLabel: "Answer / Translation",
+    answerPlaceholder: "The translation or answer...",
+  },
+};
+
+// List form for building <select>s of presets.
+export const PRESET_OPTIONS = Object.entries(SUBJECT_PRESETS).map(([id, p]) => ({
+  id,
+  label: p.label,
+}));
+
+// Resolve a preset key to its config (falls back to the code preset).
+export function presetConfig(preset) {
+  return SUBJECT_PRESETS[preset] || SUBJECT_PRESETS[DEFAULT_PRESET];
+}
+
 // ---- Special "keyword" tags ----
 // These are ordinary tags, but Bonfire treats them specially: they organize
 // cards by difficulty/foundation and control how a card behaves in study.

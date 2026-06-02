@@ -69,6 +69,9 @@ option { background: var(--input); color: var(--text); }
   padding: 8px 10px;
   letter-spacing: 0.3px;
 }
+.deck-switch { padding: 2px 10px 10px; }
+.deck-switch label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+.deck-switch select { width: 100%; }
 #sidebar nav { display: flex; flex-direction: column; gap: 4px; }
 #sidebar nav button {
   height: 34px;
@@ -258,6 +261,7 @@ textarea { resize: vertical; }
 .list-row .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list-row .cat { color: var(--muted); }
 .review-dot { color: var(--due); }
+.list-row .review-btn { margin-left: 16px; }
 
 /* ---- Library ---- */
 .filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; align-items: center; }
