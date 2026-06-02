@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bonfire</title>
+    <!-- Vendored highlight.js browser bundle exposes global `hljs`. -->
+    <script src="/vendor/highlight.min.js"></script>
+    <script type="module" src="/main.js"></script>
+  </head>
+
+  <body>
+    <div id="app">
+      <aside id="sidebar">
+        <div class="brand">Bonfire</div>
+        <nav>
+          <button data-view="dashboard">Dashboard</button>
+          <button data-view="library">Library</button>
+          <button data-view="study">Study</button>
+          <button data-view="settings">Settings</button>
+        </nav>
+        <div class="sidebar-spacer"></div>
+        <button id="new-shard" class="btn btn-primary">+ New Shard</button>
+      </aside>
+      <main id="view"></main>
+    </div>
+    <div id="modal-root"></div>
+  </body>
+</html>
