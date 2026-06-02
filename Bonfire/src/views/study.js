@@ -1,10 +1,45 @@
 // Study: active-recall testing. A configurable, editable, due-first queue of cards;
 // each card shows a question, you type an answer, reveal + compare, then self-grade (SM-2).
-import { el, esc, langBadge, metaBadges, isDue, enableTab } from "../dom.js";
-import { DIFFICULTIES, getDifficulty, isFoundation, isRevealOnly } from "../constants.js";
+import { el, esc, langBadge, metaBadges, isDue, enableTab, todayStr } from "../dom.js";
+import { DIFFICULTIES, FAMILIARITY_ORDER, getDifficulty, isFoundation, isRevealOnly } from "../constants.js";
 import { highlightInto } from "../highlight.js";
 
 const CONFIG_KEY = "daily_study";
+const PROGRESS_KEY = "study_progress";
+
+// ---- Cloze helpers ----
+const CLOZE_RE = /\{\{(?:c\d+::)?([\s\S]*?)\}\}/g;
+
+function hasClozeMarkers(text) {
+  CLOZE_RE.lastIndex = 0;
+  return CLOZE_RE.test(text || "");
+}
+
+// Render cloze text to escaped HTML. mode "masked" hides deletions as blanks;
+// mode "reveal" shows them highlighted.
+function clozeHtml(text, mode) {
+  const re = new RegExp(CLOZE_RE.source, "g");
+  let out = "";
+  let last = 0;
+  let m;
+  while ((m = re.exec(text || ""))) {
+    out += esc(text.slice(last, m.index));
+    out +=
+      mode === "masked"
+        ? '<span class="cloze-blank">[ … ]</span>'
+        : `<mark class="cloze-fill">${esc(m[1])}</mark>`;
+    last = m.index + m[0].length;
+  }
+  out += esc((text || "").slice(last));
+  return out;
+}
+
+// Small badge for non-basic card types shown on the study card.
+function cardTypeBadge(type) {
+  return type && type !== "basic"
+    ? `<span class="badge" style="background:#555">${esc(type)}</span>`
+    : "";
+}
 
 export const DEFAULT_CONFIG = {
   timeLimitMinutes: 30,
@@ -16,7 +51,40 @@ export const DEFAULT_CONFIG = {
   excludeTags: [], // card must have none of these
   cram: false, // ignore due dates, draw from whole matching set
   showPreview: true, // quick-start lands on the editable preview first
+  limitNew: false, // cap brand-new cards introduced per day
+  newPerDay: 20,
+  limitReviews: false, // cap review cards per day
+  reviewsPerDay: 100,
 };
+
+// Per-day study counters (new cards introduced + reviews done), reset at midnight,
+// so the daily caps hold across multiple sessions in the same day.
+export async function loadProgress(ctx) {
+  let raw = null;
+  try {
+    raw = await ctx.api.getSetting(PROGRESS_KEY);
+  } catch (_e) {
+    /* ignore */
+  }
+  const today = todayStr();
+  const p = raw ? JSON.parse(raw) : null;
+  if (!p || p.date !== today) return { date: today, newDone: 0, reviewsDone: 0 };
+  return { date: today, newDone: p.newDone || 0, reviewsDone: p.reviewsDone || 0 };
+}
+
+async function bumpProgress(ctx, isNew) {
+  const p = await loadProgress(ctx);
+  if (isNew) p.newDone++;
+  else p.reviewsDone++;
+  try {
+    await ctx.api.setSetting(PROGRESS_KEY, JSON.stringify(p));
+  } catch (_e) {
+    /* ignore */
+  }
+}
+
+// A card is "new" until it has been successfully reviewed at least once.
+const isNewCard = (s) => (s.reviewRepetitions || 0) === 0;
 
 export async function loadConfig(ctx) {
   let raw = null;
@@ -50,18 +118,52 @@ const diffRank = (s) => {
 
 // The session queue. Strict SM-2 by default: ONLY cards that are due, most overdue
 // first. Cram mode ignores due dates and practices the whole matching set.
-function buildQueue(shards, cfg) {
+// `progress` (today's counters) lets the daily new/review caps span sessions.
+function buildQueue(shards, cfg, progress) {
   const matches = matchingCards(shards, cfg);
   let ordered;
   if (cfg.cram) {
+    // Cram ignores both due dates and the daily caps.
     ordered = [...matches].sort(
       (a, b) => diffRank(a) - diffRank(b) || (a.title || "").localeCompare(b.title || "")
     );
-  } else {
-    ordered = matches
-      .filter(isDue)
-      .sort((a, b) => (a.reviewNext || "").localeCompare(b.reviewNext || ""));
+    return ordered.slice(0, Math.max(1, cfg.maxCards || ordered.length));
   }
+
+  const due = matches
+    .filter(isDue)
+    .sort((a, b) => (a.reviewNext || "").localeCompare(b.reviewNext || ""));
+
+  // Apply per-day caps, accounting for what's already been studied today.
+  let allowedNew = Infinity;
+  let allowedReviews = Infinity;
+  if (cfg.limitNew) allowedNew = Math.max(0, (cfg.newPerDay || 0) - (progress?.newDone || 0));
+  if (cfg.limitReviews)
+    allowedReviews = Math.max(0, (cfg.reviewsPerDay || 0) - (progress?.reviewsDone || 0));
+
+  let newSeen = 0;
+  let reviewSeen = 0;
+  ordered = due.filter((s) => {
+    if (isNewCard(s)) return newSeen++ < allowedNew;
+    return reviewSeen++ < allowedReviews;
+  });
+  return ordered.slice(0, Math.max(1, cfg.maxCards || ordered.length));
+}
+
+// Weak-spot queue: ignores due dates and surfaces the cards you're struggling with
+// most — shakiest familiarity first, then lowest SM-2 ease, then hardest difficulty.
+function buildWeakQueue(shards, cfg) {
+  const matches = matchingCards(shards, cfg);
+  const famRank = (s) => {
+    const i = FAMILIARITY_ORDER.indexOf(s.familiarity);
+    return i === -1 ? 99 : i;
+  };
+  const ordered = [...matches].sort(
+    (a, b) =>
+      famRank(a) - famRank(b) ||
+      (a.reviewEase || 2.5) - (b.reviewEase || 2.5) ||
+      diffRank(a) - diffRank(b)
+  );
   return ordered.slice(0, Math.max(1, cfg.maxCards || ordered.length));
 }
 
@@ -90,7 +192,18 @@ export function buildStudyConfigForm(ctx, cfg) {
           <input type="text" id="c-time" value="${cfg.timeLimitMinutes}" />
           <label>Max cards</label>
           <input type="text" id="c-max" value="${cfg.maxCards}" />
+          <label>New cards / day</label>
+          <div class="row" style="gap:8px">
+            <label class="chk"><input type="checkbox" id="c-limitnew" ${cfg.limitNew ? "checked" : ""}/> Limit to</label>
+            <input type="text" id="c-newper" value="${cfg.newPerDay}" style="width:64px" />
+          </div>
+          <label>Reviews / day</label>
+          <div class="row" style="gap:8px">
+            <label class="chk"><input type="checkbox" id="c-limitrev" ${cfg.limitReviews ? "checked" : ""}/> Limit to</label>
+            <input type="text" id="c-revper" value="${cfg.reviewsPerDay}" style="width:64px" />
+          </div>
         </div>
+        <div class="muted" style="margin-bottom:8px">Daily caps count new cards and reviews across all of today's sessions; Cram mode ignores them.</div>
         <label class="chk"><input type="checkbox" id="c-cram" ${cfg.cram ? "checked" : ""}/> Cram mode (ignore due dates — practice the whole set)</label>
         <br/>
         <label class="chk"><input type="checkbox" id="c-preview" ${cfg.showPreview ? "checked" : ""}/> Show editable queue preview before starting (quick-start)</label>
@@ -120,6 +233,10 @@ export function buildStudyConfigForm(ctx, cfg) {
     maxCards: parseInt(node.querySelector("#c-max").value, 10) || 0,
     cram: node.querySelector("#c-cram").checked,
     showPreview: node.querySelector("#c-preview").checked,
+    limitNew: node.querySelector("#c-limitnew").checked,
+    newPerDay: parseInt(node.querySelector("#c-newper").value, 10) || 0,
+    limitReviews: node.querySelector("#c-limitrev").checked,
+    reviewsPerDay: parseInt(node.querySelector("#c-revper").value, 10) || 0,
     foundationOnly: node.querySelector("#c-foundation").checked,
     languages: readGroup("lang"),
     difficulties: readGroup("diff"),
@@ -146,9 +263,22 @@ export async function renderStudy(container, ctx, params = {}) {
     return;
   }
 
+  // Weak-spot drill: practice the shakiest cards regardless of due date.
+  if (params.weak) {
+    const queue = buildWeakQueue(ctx.state.shards, cfg);
+    if (!queue.length) {
+      renderSetup(container, ctx, cfg, "No cards to drill in this deck yet.");
+      return;
+    }
+    if (cfg.showPreview) renderPreview(container, ctx, cfg, queue);
+    else runSession(container, ctx, cfg, queue);
+    return;
+  }
+
   // Quick-start: build queue now, then preview or straight into the session.
   if (params.quick) {
-    const queue = buildQueue(ctx.state.shards, cfg);
+    const progress = await loadProgress(ctx);
+    const queue = buildQueue(ctx.state.shards, cfg, progress);
     if (!queue.length) {
       renderSetup(container, ctx, cfg, "No cards are due right now. Turn on Cram mode to practice anyway.");
       return;
@@ -171,6 +301,7 @@ function renderSetup(container, ctx, cfg, notice) {
         <h2 style="margin:0;font-size:16px">Study</h2>
         <div class="spacer"></div>
         <button class="btn btn-tool" id="save-default">Save as daily default</button>
+        <button class="btn btn-tool" id="weak">Drill weak spots</button>
         <button class="btn btn-primary" id="build">Build queue →</button>
       </div>
       ${notice ? `<div class="panel" style="border-color:#5a4a1f;color:#f5c451">${esc(notice)}</div>` : ""}
@@ -184,11 +315,22 @@ function renderSetup(container, ctx, cfg, notice) {
     alert("Saved as your daily study default.");
   });
 
-  root.querySelector("#build").addEventListener("click", () => {
+  root.querySelector("#weak").addEventListener("click", () => {
     const next = form.collect();
-    const queue = buildQueue(ctx.state.shards, next);
+    const queue = buildWeakQueue(ctx.state.shards, next);
     if (!queue.length) {
-      renderSetup(container, ctx, next, "No cards match — nothing due (try Cram mode) or loosen filters.");
+      renderSetup(container, ctx, next, "No cards to drill — loosen the filters.");
+      return;
+    }
+    renderPreview(container, ctx, next, queue);
+  });
+
+  root.querySelector("#build").addEventListener("click", async () => {
+    const next = form.collect();
+    const progress = await loadProgress(ctx);
+    const queue = buildQueue(ctx.state.shards, next, progress);
+    if (!queue.length) {
+      renderSetup(container, ctx, next, "No cards match — nothing due (try Cram mode), daily caps reached, or loosen filters.");
       return;
     }
     renderPreview(container, ctx, next, queue);
@@ -336,12 +478,21 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
     startTimer(root);
   }
 
-  function gradeAndAdvance(id, rating) {
+  function gradeAndAdvance(s, rating) {
     return async () => {
+      const wasNew = isNewCard(s);
       try {
-        await ctx.api.submitReview(id, rating);
+        await ctx.api.submitReview(s.id, rating);
       } catch (_e) {
         /* keep going even if persistence fails */
+      }
+      // Count toward today's per-day caps (skip in cram, which ignores them).
+      if (!cfg.cram) {
+        try {
+          await bumpProgress(ctx, wasNew);
+        } catch (_e) {
+          /* ignore */
+        }
       }
       session.stats.reviewed++;
       if (rating === "forgot") session.stats.forgot++;
@@ -353,6 +504,15 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
 
   function card(s) {
     const revealOnly = isRevealOnly(s.tags);
+    const type = s.cardType || "basic";
+    const isCloze = type === "cloze" && hasClozeMarkers(s.code);
+    const isReverse = type === "reverse";
+
+    // Reverse cards hide the title (it's the thing to recall); other types show it.
+    const headerHtml = isReverse
+      ? `<div class="title-big">Recall the title / term</div>`
+      : `<div class="title-big">${esc(s.title) || "(untitled)"}</div>`;
+
     const root = el(`
       <div>
         <div class="row progress-row">
@@ -362,9 +522,10 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
         </div>
         <div id="time-banner" class="time-banner" style="display:none">⏰ Time's up — wrap up when you're ready.</div>
         <div class="review-card">
-          <div class="row">${langBadge(s.language)} ${metaBadges(s.tags)}</div>
-          <div class="title-big">${esc(s.title) || "(untitled)"}</div>
+          <div class="row">${langBadge(s.language)} ${metaBadges(s.tags)} ${cardTypeBadge(type)}</div>
+          ${headerHtml}
           ${s.prompt ? `<div class="desc" style="margin-bottom:6px">${esc(s.prompt)}</div>` : ""}
+          <div id="question-extra"></div>
           <hr class="sep" />
           <div id="answer-area"></div>
           <div id="controls"></div>
@@ -382,7 +543,26 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
     const answerArea = root.querySelector("#answer-area");
     const controls = root.querySelector("#controls");
 
+    // Question content shown before answering: cloze blanks, or (reverse) the answer side.
+    const questionExtra = root.querySelector("#question-extra");
+    if (isCloze) {
+      questionExtra.innerHTML = `<div class="cloze-text">${clozeHtml(s.code, "masked")}</div>`;
+    } else if (isReverse) {
+      questionExtra.innerHTML = '<pre class="code-block"><code id="reverse-q"></code></pre>';
+      highlightInto(questionExtra.querySelector("#reverse-q"), s.code, s.language);
+    }
+
     function showReveal(typed) {
+      // The "correct answer" pane varies by card type.
+      let answerPaneHtml;
+      if (isCloze) {
+        answerPaneHtml = `<div class="cloze-text reveal">${clozeHtml(s.code, "reveal")}</div>`;
+      } else if (isReverse) {
+        answerPaneHtml = `<pre class="code-block"><code id="answer">${esc(s.title)}</code></pre>`;
+      } else {
+        answerPaneHtml = `<pre class="code-block"><code id="answer"></code></pre>`;
+      }
+
       answerArea.innerHTML = `
         <div class="compare">
           ${
@@ -390,12 +570,20 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
               ? ""
               : `<div class="compare-col"><div class="section-title">Your answer</div><pre class="code-block"><code id="typed"></code></pre></div>`
           }
-          <div class="compare-col"><div class="section-title">Answer</div><pre class="code-block"><code id="answer"></code></pre></div>
+          <div class="compare-col"><div class="section-title">Answer</div>${answerPaneHtml}</div>
         </div>
         ${s.description ? `<div class="section-title" style="margin-top:10px">Notes</div><div class="desc">${esc(s.description)}</div>` : ""}
       `;
-      if (!revealOnly) highlightInto(answerArea.querySelector("#typed"), typed || "(blank)", s.language);
-      highlightInto(answerArea.querySelector("#answer"), s.code, s.language);
+      if (!revealOnly) {
+        const typedEl = answerArea.querySelector("#typed");
+        // Cloze/reverse answers aren't code — render the typed text plainly.
+        if (isCloze || isReverse) typedEl.textContent = typed || "(blank)";
+        else highlightInto(typedEl, typed || "(blank)", s.language);
+      }
+      // Basic cards highlight the stored answer; cloze/reverse already filled it.
+      if (!isCloze && !isReverse) {
+        highlightInto(answerArea.querySelector("#answer"), s.code, s.language);
+      }
 
       controls.innerHTML = `
         <div class="muted" style="margin-top:12px">How well did you recall it?</div>
@@ -407,7 +595,7 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
         </div>
       `;
       controls.querySelectorAll(".rating button").forEach((b) =>
-        b.addEventListener("click", gradeAndAdvance(s.id, b.dataset.r))
+        b.addEventListener("click", gradeAndAdvance(s, b.dataset.r))
       );
     }
 
@@ -416,8 +604,12 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       controls.innerHTML = '<button class="btn btn-primary full-width" id="reveal">Reveal Answer</button>';
       controls.querySelector("#reveal").addEventListener("click", () => showReveal(""));
     } else {
-      answerArea.innerHTML =
-        '<textarea class="code-editor" id="type-answer" spellcheck="false" placeholder="Type your answer, then Submit (Ctrl+Enter)"></textarea>';
+      const ph = isCloze
+        ? "Type the missing word(s), then Submit (Ctrl+Enter)"
+        : isReverse
+          ? "Type the title / term, then Submit (Ctrl+Enter)"
+          : "Type your answer, then Submit (Ctrl+Enter)";
+      answerArea.innerHTML = `<textarea class="code-editor" id="type-answer" spellcheck="false" placeholder="${esc(ph)}"></textarea>`;
       controls.innerHTML = '<button class="btn btn-primary full-width" id="submit">Submit ▶</button>';
       const ta = answerArea.querySelector("#type-answer");
       enableTab(ta);

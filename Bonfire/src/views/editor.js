@@ -6,6 +6,7 @@ import {
   DIFFICULTIES,
   REVEAL_ONLY_TAG,
   FOUNDATION_TAG,
+  cardTypeOptions,
   getDifficulty,
   isFoundation,
   isRevealOnly,
@@ -25,6 +26,7 @@ function blankShard() {
     code: "",
     description: "",
     deckId: "",
+    cardType: "basic",
     tags: [],
     category: "snippet",
     familiarity: "fresh",
@@ -175,6 +177,8 @@ export function renderEditor(container, ctx, params = {}) {
           <label>Prompt</label>
           <textarea id="f-prompt" style="min-height:48px" placeholder="Optional: the full task shown during testing">${esc(shard.prompt)}</textarea>
           ${languageField}
+          <label>Card type</label>
+          <select id="f-cardtype">${cardTypeOptions(shard.cardType)}</select>
           <label>Category</label>
           <select id="f-cat">${catOpts}</select>
           <label>Familiarity</label>
@@ -194,6 +198,7 @@ export function renderEditor(container, ctx, params = {}) {
           <button type="button" class="btn btn-toggle ${shard.reviewEnabled ? "on" : ""}" id="f-review">Enable Spaced Repetition</button>
         </div>
         <div class="section-title">${esc(preset.answerLabel)} *</div>
+        <div class="muted" id="cardtype-hint" style="margin-bottom:6px;display:none">For cloze cards, wrap the words to hide in <code>{{c1::double braces}}</code>. They'll be blanked out during study.</div>
         <textarea class="code-editor" id="f-code" spellcheck="false" placeholder="${esc(preset.answerPlaceholder)}">${esc(shard.code)}</textarea>
         <div class="section-title" style="margin-top:12px">Description</div>
         <textarea id="f-desc" style="width:100%;min-height:80px" placeholder="Why does this work? When would you use it?">${esc(shard.description)}</textarea>
@@ -256,6 +261,15 @@ export function renderEditor(container, ctx, params = {}) {
       reviewBtn.classList.toggle("on", reviewEnabled);
     });
 
+    // Show the cloze-syntax hint only when the cloze card type is selected.
+    const cardTypeSel = root.querySelector("#f-cardtype");
+    const cardTypeHint = root.querySelector("#cardtype-hint");
+    const syncCardTypeHint = () => {
+      cardTypeHint.style.display = cardTypeSel.value === "cloze" ? "block" : "none";
+    };
+    cardTypeSel.addEventListener("change", syncCardTypeHint);
+    syncCardTypeHint();
+
     root.querySelector("#back").addEventListener("click", () => ctx.navigate("library"));
     root.querySelector("#cancel").addEventListener("click", () => {
       if (isNew) {
@@ -283,6 +297,7 @@ export function renderEditor(container, ctx, params = {}) {
         title,
         prompt: root.querySelector("#f-prompt").value.trim(),
         language: langSel ? (langSel.value === ADD_CUSTOM ? shard.language : langSel.value) : shard.language,
+        cardType: cardTypeSel.value,
         category: root.querySelector("#f-cat").value,
         familiarity: root.querySelector("#f-fam").value,
         source: root.querySelector("#f-source").value.trim(),

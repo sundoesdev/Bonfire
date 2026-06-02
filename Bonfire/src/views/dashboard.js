@@ -51,9 +51,15 @@ export function renderDashboard(container, ctx) {
       </div>
 
       <div class="panel">
+        <div class="section-title">Upcoming reviews (next 7 days)</div>
+        <div id="forecast"></div>
+      </div>
+
+      <div class="panel">
         <div class="row">
           <div class="section-title" style="margin:0">Due for Review</div>
           <div class="spacer"></div>
+          <button class="btn btn-tool" id="weak">Weak spots</button>
           <button class="btn btn-tool" id="daily">Daily (Ctrl+D)</button>
           <button class="btn btn-primary" id="start-study">Start Study</button>
         </div>
@@ -78,6 +84,22 @@ export function renderDashboard(container, ctx) {
     }
   }
 
+  // 7-day review forecast (current deck). Day 0 includes anything overdue.
+  const forecastEl = root.querySelector("#forecast");
+  const days = buildForecast(shards);
+  const max = Math.max(1, ...days.map((d) => d.count));
+  forecastEl.innerHTML = "";
+  days.forEach((d) => {
+    const row = el(`
+      <div class="forecast-row">
+        <span class="forecast-label">${esc(d.label)}</span>
+        <span class="forecast-bar-track"><span class="forecast-bar" style="width:${(d.count / max) * 100}%"></span></span>
+        <span class="forecast-count">${d.count}</span>
+      </div>
+    `);
+    forecastEl.appendChild(row);
+  });
+
   // Recent list.
   const recentList = root.querySelector("#recent-list");
   if (!recent.length) {
@@ -88,6 +110,7 @@ export function renderDashboard(container, ctx) {
 
   root.querySelector("#start-study").addEventListener("click", () => ctx.startStudy());
   root.querySelector("#daily").addEventListener("click", () => ctx.quickStudy());
+  root.querySelector("#weak").addEventListener("click", () => ctx.weakStudy());
   root.querySelector("#export-btn").addEventListener("click", () => exportVault(ctx));
   root.querySelector("#import-btn").addEventListener("click", async () => {
     await importVault(ctx);
@@ -95,6 +118,34 @@ export function renderDashboard(container, ctx) {
   });
 
   container.appendChild(root);
+}
+
+// YYYY-MM-DD for a Date in local time.
+function ymd(d) {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+// Count review-enabled cards due on each of the next 7 days. Day 0 ("Today")
+// rolls in everything overdue (reviewNext on or before today).
+function buildForecast(shards) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const out = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(today);
+    d.setDate(today.getDate() + i);
+    const ds = ymd(d);
+    const count = shards.filter((s) => {
+      if (!s.reviewEnabled || !s.reviewNext) return false;
+      return i === 0 ? s.reviewNext <= ds : s.reviewNext === ds;
+    }).length;
+    const label =
+      i === 0 ? "Today" : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    out.push({ label, count });
+  }
+  return out;
 }
 
 function shardRow(s, ctx) {

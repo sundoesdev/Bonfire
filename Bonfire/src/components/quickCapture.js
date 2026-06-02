@@ -4,6 +4,7 @@ import {
   DIFFICULTIES,
   FOUNDATION_TAG,
   REVEAL_ONLY_TAG,
+  cardTypeOptions,
   getDifficulty,
   isFoundation,
   isRevealOnly,
@@ -56,6 +57,10 @@ export function openQuickCapture(ctx) {
         <div class="field">
           <label>Difficulty</label>
           <select id="qc-diff">${diffOpts}</select>
+        </div>
+        <div class="field">
+          <label>Card type</label>
+          <select id="qc-cardtype">${cardTypeOptions("basic")}</select>
         </div>
         <div class="vlist" style="margin-bottom:10px">
           <label class="chk"><input type="checkbox" id="qc-foundation" /> Foundation</label>
@@ -130,6 +135,7 @@ export function openQuickCapture(ctx) {
       code,
       description: "",
       deckId: ctx.currentDeckId(),
+      cardType: backdrop.querySelector("#qc-cardtype").value,
       tags: parseTags(tagsInput.value),
       category: "snippet",
       familiarity: "fresh",

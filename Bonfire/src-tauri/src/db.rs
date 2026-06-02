@@ -69,6 +69,19 @@ fn migrate(conn: &Connection) -> Result<()> {
     if has_deck_id == 0 {
         conn.execute("ALTER TABLE shards ADD COLUMN deck_id TEXT NOT NULL DEFAULT ''", [])?;
     }
+
+    // Card type (basic / cloze / reverse).
+    let has_card_type: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('shards') WHERE name = 'card_type'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_card_type == 0 {
+        conn.execute(
+            "ALTER TABLE shards ADD COLUMN card_type TEXT NOT NULL DEFAULT 'basic'",
+            [],
+        )?;
+    }
     let now = chrono::Local::now().to_rfc3339();
     conn.execute(
         "INSERT OR IGNORE INTO decks (id, name, preset, position, created_at, modified_at)
@@ -143,6 +156,7 @@ fn row_to_shard(row: &rusqlite::Row) -> Result<Shard> {
         code: row.get("code")?,
         description: row.get("description")?,
         deck_id: row.get("deck_id")?,
+        card_type: row.get("card_type")?,
         tags: serde_json::from_str(&tags_json).unwrap_or_default(),
         category: row.get("category")?,
         familiarity: row.get("familiarity")?,
@@ -181,17 +195,17 @@ pub fn save_shard(conn: &Connection, s: &Shard) -> Result<()> {
     let tags = serde_json::to_string(&s.tags).unwrap_or_else(|_| "[]".into());
     let related = serde_json::to_string(&s.related_ids).unwrap_or_else(|_| "[]".into());
     conn.execute(
-        "INSERT INTO shards (id, title, language, prompt, code, description, deck_id, tags, category,
+        "INSERT INTO shards (id, title, language, prompt, code, description, deck_id, card_type, tags, category,
             familiarity, source, related_ids, created_at, modified_at, last_reviewed,
             review_enabled, review_interval, review_reps, review_ease, review_next)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)
          ON CONFLICT(id) DO UPDATE SET
-            title=?2, language=?3, prompt=?4, code=?5, description=?6, deck_id=?7, tags=?8, category=?9,
-            familiarity=?10, source=?11, related_ids=?12, created_at=?13, modified_at=?14,
-            last_reviewed=?15, review_enabled=?16, review_interval=?17, review_reps=?18,
-            review_ease=?19, review_next=?20",
+            title=?2, language=?3, prompt=?4, code=?5, description=?6, deck_id=?7, card_type=?8, tags=?9, category=?10,
+            familiarity=?11, source=?12, related_ids=?13, created_at=?14, modified_at=?15,
+            last_reviewed=?16, review_enabled=?17, review_interval=?18, review_reps=?19,
+            review_ease=?20, review_next=?21",
         params![
-            s.id, s.title, s.language, s.prompt, s.code, s.description, s.deck_id, tags, s.category,
+            s.id, s.title, s.language, s.prompt, s.code, s.description, s.deck_id, s.card_type, tags, s.category,
             s.familiarity, s.source, related, s.created_at, s.modified_at, s.last_reviewed,
             s.review_enabled as i64, s.review_interval, s.review_repetitions, s.review_ease,
             s.review_next,
@@ -257,6 +271,40 @@ pub fn delete_deck(conn: &Connection, id: &str) -> Result<()> {
     )?;
     conn.execute("DELETE FROM decks WHERE id = ?1", params![id])?;
     Ok(())
+}
+
+/// Rename a tag across every shard. Renaming onto an existing tag merges them
+/// (duplicates are removed). Returns the number of shards changed.
+pub fn rename_tag(conn: &Connection, old: &str, new: &str) -> Result<usize> {
+    let mut changed = 0;
+    for mut s in all_shards(conn)? {
+        if !s.tags.iter().any(|t| t == old) {
+            continue;
+        }
+        let mut seen = std::collections::HashSet::new();
+        s.tags = s
+            .tags
+            .into_iter()
+            .map(|t| if t == old { new.to_string() } else { t })
+            .filter(|t| !t.is_empty() && seen.insert(t.clone()))
+            .collect();
+        save_shard(conn, &s)?;
+        changed += 1;
+    }
+    Ok(changed)
+}
+
+/// Remove a tag from every shard. Returns the number of shards changed.
+pub fn delete_tag(conn: &Connection, tag: &str) -> Result<usize> {
+    let mut changed = 0;
+    for mut s in all_shards(conn)? {
+        if s.tags.iter().any(|t| t == tag) {
+            s.tags.retain(|t| t != tag);
+            save_shard(conn, &s)?;
+            changed += 1;
+        }
+    }
+    Ok(changed)
 }
 
 pub fn custom_languages(conn: &Connection) -> Result<Vec<String>> {

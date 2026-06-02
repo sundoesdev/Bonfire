@@ -16,6 +16,9 @@ pub struct Shard {
     pub description: String,
     /// Which deck this card belongs to (empty => migrated to the default deck).
     pub deck_id: String,
+    /// Study format: "basic" (type the answer), "cloze" ({{c1::..}} blanks),
+    /// or "reverse" (answer is shown, recall the title). Empty => "basic".
+    pub card_type: String,
     pub tags: Vec<String>,
     pub category: String,
     pub familiarity: String,
@@ -43,6 +46,7 @@ impl Default for Shard {
             code: String::new(),
             description: String::new(),
             deck_id: String::new(),
+            card_type: "basic".to_string(),
             tags: Vec::new(),
             category: "snippet".to_string(),
             familiarity: "fresh".to_string(),

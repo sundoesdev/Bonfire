@@ -107,6 +107,22 @@ export function presetConfig(preset) {
   return SUBJECT_PRESETS[preset] || SUBJECT_PRESETS[DEFAULT_PRESET];
 }
 
+// ---- Card types ----
+// How a card is tested in a study session. `basic` is the default active-recall
+// flow; `cloze` blanks out {{c1::..}} spans in the answer; `reverse` shows the
+// answer and asks you to recall the title (great for vocab decks).
+export const CARD_TYPES = [
+  { id: "basic", label: "Basic — type the answer" },
+  { id: "cloze", label: "Cloze — fill in {{c1::blanks}}" },
+  { id: "reverse", label: "Reverse — answer shown, recall the title" },
+];
+
+export function cardTypeOptions(current) {
+  return CARD_TYPES.map(
+    (t) => `<option value="${t.id}" ${t.id === current ? "selected" : ""}>${t.label}</option>`
+  ).join("");
+}
+
 // ---- Special "keyword" tags ----
 // These are ordinary tags, but Bonfire treats them specially: they organize
 // cards by difficulty/foundation and control how a card behaves in study.

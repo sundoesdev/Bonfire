@@ -6,8 +6,10 @@ import { renderDashboard } from "./views/dashboard.js";
 import { renderLibrary } from "./views/library.js";
 import { renderEditor } from "./views/editor.js";
 import { renderStudy } from "./views/study.js";
+import { renderTags } from "./views/tags.js";
 import { renderSettings } from "./views/settings.js";
 import { openQuickCapture } from "./components/quickCapture.js";
+import { openCommandPalette } from "./components/commandPalette.js";
 import { loadAppearance } from "./theme.js";
 
 const DECK_KEY = "current_deck";
@@ -25,6 +27,7 @@ const VIEWS = {
   library: renderLibrary,
   editor: renderEditor,
   study: renderStudy,
+  tags: renderTags,
   settings: renderSettings,
 };
 
@@ -125,8 +128,10 @@ const ctx = {
   newShard: () => navigate("editor", { id: null }),
   startStudy: () => navigate("study"),
   quickStudy: () => navigate("study", { quick: true }),
+  weakStudy: () => navigate("study", { weak: true }),
   reviewCard: (id) => navigate("study", { single: id }),
   openQuickCapture: () => openQuickCapture(ctx),
+  openCommandPalette: () => openCommandPalette(ctx),
 };
 
 window.addEventListener("DOMContentLoaded", async () => {
@@ -152,7 +157,10 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Global shortcuts: Ctrl+N quick capture, Ctrl+K library search.
   window.addEventListener("keydown", (e) => {
-    if (e.ctrlKey && e.key.toLowerCase() === "n") {
+    if (e.ctrlKey && e.key.toLowerCase() === "p") {
+      e.preventDefault();
+      ctx.openCommandPalette();
+    } else if (e.ctrlKey && e.key.toLowerCase() === "n") {
       e.preventDefault();
       ctx.openQuickCapture();
     } else if (e.ctrlKey && e.key.toLowerCase() === "k") {

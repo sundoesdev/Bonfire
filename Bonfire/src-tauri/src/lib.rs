@@ -44,6 +44,9 @@ fn save_shard(state: State<AppState>, mut shard: Shard) -> Result<Shard, String>
     if shard.deck_id.trim().is_empty() {
         shard.deck_id = db::DEFAULT_DECK_ID.to_string();
     }
+    if shard.card_type.trim().is_empty() {
+        shard.card_type = "basic".to_string();
+    }
     shard.modified_at = now;
     with_conn(&state, |c| db::save_shard(c, &shard))?;
     Ok(shard)
@@ -126,6 +129,22 @@ fn mark_reviewed(state: State<AppState>, id: String) -> Result<Shard, String> {
     review_with_quality(&state, &id, 4)
 }
 
+/// Rename a tag across all cards (renaming onto an existing tag merges them).
+#[tauri::command]
+fn rename_tag(state: State<AppState>, old: String, new: String) -> Result<usize, String> {
+    let new = new.trim().to_lowercase();
+    if new.is_empty() {
+        return Err("New tag name is required.".into());
+    }
+    with_conn(&state, |c| db::rename_tag(c, old.trim(), &new))
+}
+
+/// Remove a tag from all cards.
+#[tauri::command]
+fn delete_tag(state: State<AppState>, tag: String) -> Result<usize, String> {
+    with_conn(&state, |c| db::delete_tag(c, tag.trim()))
+}
+
 #[tauri::command]
 fn get_setting(state: State<AppState>, key: String) -> Result<Option<String>, String> {
     with_conn(&state, |c| db::get_setting(c, &key))
@@ -191,6 +210,8 @@ pub fn run() {
             delete_deck,
             submit_review,
             mark_reviewed,
+            rename_tag,
+            delete_tag,
             get_setting,
             set_setting,
             list_custom_languages,

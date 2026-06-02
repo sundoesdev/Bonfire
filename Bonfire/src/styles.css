@@ -460,6 +460,45 @@ textarea { resize: vertical; }
   .compare { flex-direction: column; }
 }
 
+/* Cloze cards */
+.cloze-text {
+  white-space: pre-wrap;
+  line-height: 1.6;
+  padding: 10px 12px;
+  margin: 4px 0 12px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+}
+.cloze-blank { color: var(--due); font-weight: 700; }
+.cloze-fill { background: rgba(245, 196, 81, 0.25); color: var(--text); border-radius: 3px; padding: 0 3px; }
+
+/* Review forecast bars */
+.forecast-row { display: flex; align-items: center; gap: 10px; height: 24px; }
+.forecast-label { width: 92px; flex-shrink: 0; color: var(--muted); font-size: 12px; }
+.forecast-bar-track { flex: 1; height: 10px; background: var(--glass-bg); border-radius: 5px; overflow: hidden; }
+.forecast-bar { display: block; height: 100%; background: var(--due, #f5c451); border-radius: 5px; min-width: 0; }
+.forecast-count { width: 28px; text-align: right; font-size: 12px; color: var(--text); }
+
+/* Command palette (Ctrl+P) */
+.modal.palette { width: 560px; max-width: 92vw; padding: 0; overflow: hidden; }
+.modal.palette #cp-input {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid var(--glass-border);
+  border-radius: 0;
+  padding: 14px 16px;
+  font-size: 15px;
+  background: transparent;
+  color: var(--text);
+}
+.cp-results { max-height: 50vh; overflow: auto; }
+.cp-item { display: flex; gap: 10px; align-items: center; padding: 8px 16px; cursor: pointer; }
+.cp-item.active { background: var(--glass-bg); }
+.cp-cat { width: 56px; flex-shrink: 0; font-size: 10px; letter-spacing: 0.4px; text-transform: uppercase; color: var(--muted); }
+.cp-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-empty { padding: 14px 16px; color: var(--muted); }
+
 /* ================= Themes ================= */
 /* Light */
 body.theme-light {

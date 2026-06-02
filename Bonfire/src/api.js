@@ -13,6 +13,8 @@ export const saveDeck = (deck) => invoke("save_deck", { deck });
 export const deleteDeck = (id) => invoke("delete_deck", { id });
 export const submitReview = (id, rating) => invoke("submit_review", { id, rating });
 export const markReviewed = (id) => invoke("mark_reviewed", { id });
+export const renameTag = (oldName, newName) => invoke("rename_tag", { old: oldName, new: newName });
+export const deleteTag = (tag) => invoke("delete_tag", { tag });
 export const getSetting = (key) => invoke("get_setting", { key });
 export const setSetting = (key, value) => invoke("set_setting", { key, value });
 export const listCustomLanguages = () => invoke("list_custom_languages");
