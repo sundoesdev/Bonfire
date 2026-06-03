@@ -17,6 +17,7 @@ function buildItems(ctx) {
     ["dashboard", "Dashboard"],
     ["library", "Library"],
     ["study", "Study"],
+    ["stats", "Stats"],
     ["tags", "Tags"],
     ["settings", "Settings"],
   ].forEach(([v, label]) => add("Go to", label, () => ctx.navigate(v)));

@@ -50,6 +50,27 @@ option { background: var(--input); color: var(--text); }
   overflow: hidden;
 }
 
+/* ---- Update badge (auto-updater scaffold): subtle but noticeable ---- */
+.update-badge {
+  margin: 2px 4px 6px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--primary);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  box-shadow: 0 0 0 0 rgba(0, 120, 212, 0.5);
+  animation: update-pulse 2.4s ease-in-out infinite;
+}
+.update-badge:hover { background: var(--primary-hover); }
+@keyframes update-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 120, 212, 0.45); }
+  50% { box-shadow: 0 0 0 4px rgba(0, 120, 212, 0); }
+}
+
 /* ---- Sidebar ---- */
 #sidebar {
   width: 148px;
@@ -498,6 +519,143 @@ textarea { resize: vertical; }
 .cp-cat { width: 56px; flex-shrink: 0; font-size: 10px; letter-spacing: 0.4px; text-transform: uppercase; color: var(--muted); }
 .cp-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cp-empty { padding: 14px 16px; color: var(--muted); }
+
+/* ---- markdown-lite output ---- */
+.markdown-body code {
+  background: var(--code-bg);
+  color: var(--code-text);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.92em;
+}
+.markdown-body a { color: var(--primary); }
+.markdown-body ul { margin: 4px 0; padding-left: 20px; }
+.markdown-body strong { color: var(--text); }
+
+/* ---- Media attachments ---- */
+.study-image {
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  display: block;
+}
+.study-media { display: flex; flex-wrap: wrap; gap: 12px; margin: 10px 0; }
+.media-view { display: flex; flex-wrap: wrap; gap: 12px; }
+.media-view-item { max-width: 360px; }
+.media-cap { margin-top: 4px; font-size: 12px; }
+.media-view-item audio, .study-media audio { width: 320px; max-width: 100%; }
+
+.media-editor { margin-top: 4px; }
+.media-tools { gap: 8px; flex-wrap: wrap; }
+.media-list { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.media-item {
+  display: flex;
+  gap: 12px;
+  padding: 8px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+}
+.media-item .media-thumb { width: 120px; flex-shrink: 0; }
+.media-item .media-thumb img { width: 120px; height: 80px; object-fit: cover; border-radius: 4px; }
+.media-item .media-thumb audio { width: 120px; }
+.media-item .media-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.btn-tool.on { background: var(--danger); color: #fff; }
+
+/* ---- Stats: heatmap ---- */
+.heatmap-scroll { overflow-x: auto; padding-bottom: 6px; }
+.heatmap-grid { display: flex; gap: 3px; }
+.hm-col { display: flex; flex-direction: column; gap: 3px; }
+.hm-cell {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+}
+.hm-cell[data-level="1"] { background: rgba(245,196,81,0.30); border-color: transparent; }
+.hm-cell[data-level="2"] { background: rgba(245,196,81,0.55); border-color: transparent; }
+.hm-cell[data-level="3"] { background: rgba(245,196,81,0.78); border-color: transparent; }
+.hm-cell[data-level="4"] { background: var(--due); border-color: transparent; }
+.hm-cell.future { background: transparent; border-color: transparent; }
+.hm-months { display: flex; gap: 3px; margin-bottom: 4px; }
+.hm-month { width: 11px; font-size: 9px; color: var(--muted); overflow: visible; white-space: nowrap; }
+.hm-legend { display: flex; align-items: center; gap: 4px; margin-top: 8px; }
+.hm-legend .hm-cell { cursor: default; }
+
+/* ---- Stats: mastery + weak bars ---- */
+.mastery-track { flex: 1; max-width: 200px; height: 8px; background: var(--glass-bg); border-radius: 4px; overflow: hidden; }
+.mastery-fill { display: block; height: 100%; background: var(--primary); border-radius: 4px; }
+
+/* ---- Stats: retention chart (item 9: HTML axis labels, no stretched text) ---- */
+.ret-plot { position: relative; padding-left: 34px; }
+.ret-chart { width: 100%; height: 200px; display: block; }
+.ret-grid { stroke: var(--glass-border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.ret-area { fill: rgba(0,120,212,0.12); }
+.ret-line { fill: none; stroke: var(--primary); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.ret-ylabel {
+  position: absolute;
+  left: 0;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: var(--muted);
+}
+.ret-xaxis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+/* ---- Stats: vertical Today/7d/30d totals (item 12) ---- */
+.hm-totals { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted-2); text-align: right; }
+
+/* ---- Category chip (item 10: "snippet" was unreadable) ---- */
+.badge.cat-badge {
+  background: var(--border-strong);
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* ---- CodeMirror answer editor (items 6 & 7: live highlight + VIM) ---- */
+.editor-vim-toggle { display: inline-flex; margin-bottom: 6px; }
+.CodeMirror {
+  height: auto;
+  min-height: 130px;
+  background: var(--code-bg);
+  color: var(--code-text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 6px 4px;
+}
+.CodeMirror-gutters { background: var(--code-bg); border: none; }
+.CodeMirror-cursor { border-left: 1px solid var(--text); }
+.cm-fat-cursor .CodeMirror-cursor, .CodeMirror-fat-cursor .CodeMirror-cursor {
+  background: var(--code-text);
+  opacity: 0.55;
+}
+.CodeMirror-selected { background: var(--selection) !important; }
+.CodeMirror-dialog {
+  background: var(--panel);
+  color: var(--text);
+  border-color: var(--border);
+}
+.CodeMirror-dialog input { color: var(--text); }
+/* Token colors (override CM's light "default" theme for our dark UI) */
+.cm-s-default .cm-keyword { color: #c586c0; }
+.cm-s-default .cm-atom { color: #569cd6; }
+.cm-s-default .cm-number { color: #b5cea8; }
+.cm-s-default .cm-def { color: #dcdcaa; }
+.cm-s-default .cm-variable-2 { color: #9cdcfe; }
+.cm-s-default .cm-variable-3, .cm-s-default .cm-type { color: #4ec9b0; }
+.cm-s-default .cm-property { color: #9cdcfe; }
+.cm-s-default .cm-operator { color: #d4d4d4; }
+.cm-s-default .cm-comment { color: #6a9955; font-style: italic; }
+.cm-s-default .cm-string, .cm-s-default .cm-string-2 { color: #ce9178; }
+.cm-s-default .cm-meta { color: #9cdcfe; }
+.cm-s-default .cm-builtin { color: #4ec9b0; }
+.cm-s-default .cm-tag { color: #569cd6; }
+.cm-s-default .cm-attribute { color: #9cdcfe; }
+.cm-s-default .cm-link { color: #ce9178; }
 
 /* ================= Themes ================= */
 /* Light */

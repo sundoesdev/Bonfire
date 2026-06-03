@@ -1,0 +1,119 @@
+==============================================================================
+Bonfire — How to build & ship installers (GitHub Releases)
+==============================================================================
+
+WHAT THIS IS
+------------
+Bonfire is a Tauri desktop app. It is COMPILED into a native binary per
+operating system — there is no single "universal installer that compiles on the
+user's machine." Instead:
+
+  * You push a version tag (e.g. v0.2.0).
+  * GitHub Actions builds an installer on Windows, macOS and Linux runners.
+  * It publishes them all to a GitHub *Release*.
+  * Each user opens the Releases page and downloads the file for THEIR OS:
+        Windows ......... .msi  and  .exe  (NSIS)
+        macOS ........... .dmg  (Apple Silicon + Intel)
+        Linux ........... .deb, .rpm, .AppImage
+  * Installing it creates the normal app-launcher entry (Start menu / Spotlight
+    / GNOME app grid), so it's searchable like any other app.
+
+The workflow that does this is committed at:
+        .github/workflows/release.yml
+Because it's part of the repo, it travels with your code automatically.
+
+
+TO CUT A RELEASE (on the current repo)
+--------------------------------------
+1. Bump the version in BOTH:
+        Bonfire/src-tauri/tauri.conf.json   ("version")
+        Bonfire/src-tauri/Cargo.toml        ("version")
+   (keep them equal)
+2. Commit, then tag and push the tag:
+        git tag v0.2.0
+        git push origin v0.2.0
+3. Watch the "Release" workflow under the repo's Actions tab.
+4. When it finishes, a DRAFT release appears under Releases with all installers
+   attached. Review it, then click "Publish release."
+
+You can also run it manually: Actions tab -> Release -> "Run workflow".
+
+
+IF YOU DELETE THIS REPO AND RECREATE IT ON A DIFFERENT GITHUB ACCOUNT
+---------------------------------------------------------------------
+Everything you need is in the code, so this is easy. The workflow file comes
+with the repo; the only things that are GitHub-side are trivial for unsigned
+builds:
+
+1. Create the new empty repo on GitHub.
+2. Point your local clone at it and push:
+        git remote set-url origin https://github.com/<you>/<newrepo>.git
+        git push -u origin main
+3. That's it for setup, because:
+     * GitHub Actions is ENABLED by default on new repos.
+     * The automatic GITHUB_TOKEN secret is provided for you (nothing to create).
+     * The workflow already declares `permissions: contents: write`, so it is
+       allowed to create Releases without changing any repo setting.
+4. Cut a release as above (tag a vX.Y.Z and push the tag).
+
+NOTE: if you change the GitHub org/repo name, update any hard-coded repo URL you
+add later for the auto-updater endpoint (see "FUTURE: AUTO-UPDATER" below). The
+release workflow itself does not hard-code your repo, so it just works.
+
+
+BUILDING LOCALLY (Linux, for quick testing)
+-------------------------------------------
+        cd Bonfire
+        npm run tauri build
+
+Artifacts land in:
+        Bonfire/src-tauri/target/release/bundle/
+            deb/      *.deb
+            rpm/      *.rpm
+            appimage/ *.AppImage
+
+You can only build installers for the OS you're on. Windows/macOS installers
+require Windows/macOS machines — which is exactly why CI (above) does all three.
+
+
+CODE SIGNING (deferred)
+-----------------------
+Current builds are UNSIGNED. Users get a one-time "unknown developer" warning
+(Windows SmartScreen / macOS Gatekeeper) and can still install. To remove the
+warnings later you need paid certificates and CI secrets:
+    * macOS: an Apple Developer ID cert ($99/yr) + notarization.
+    * Windows: an Authenticode code-signing certificate.
+Signing can be added later with no rework to the app itself.
+
+
+THE APP ICON
+------------
+The launcher/installer icon is generated from a source image. To change it:
+    1. Replace the source (currently Bonfire/src-tauri/app-icon.png, made from
+       the repo-root icon.jpg).
+    2. cd Bonfire && npm run tauri icon src-tauri/app-icon.png
+    3. Commit the regenerated Bonfire/src-tauri/icons/ files.
+
+
+FUTURE: AUTO-UPDATER (scaffolded, not active yet)
+-------------------------------------------------
+The app already has a hidden "Update available" badge and a no-op update check
+(src/update.js). To turn it on:
+    1. Add the plugins:
+         cd Bonfire/src-tauri && cargo add tauri-plugin-updater tauri-plugin-process
+       and register them in src-tauri/src/lib.rs.
+    2. Generate a signing key pair:
+         cd Bonfire && npm run tauri signer generate
+       Put the PUBLIC key in tauri.conf.json -> plugins.updater.pubkey.
+       Add the PRIVATE key as a GitHub Actions secret named
+       TAURI_SIGNING_PRIVATE_KEY (+ TAURI_SIGNING_PRIVATE_KEY_PASSWORD).
+    3. In tauri.conf.json:
+         bundle.createUpdaterArtifacts = true
+         plugins.updater.endpoints = [
+           "https://github.com/<you>/<repo>/releases/latest/download/latest.json"
+         ]
+    4. Grant capabilities in src-tauri/capabilities/default.json:
+         "updater:default", "process:allow-restart"
+    5. Re-run the release workflow. tauri-action will sign the bundles and attach
+       latest.json automatically. The in-app badge then lights up when a newer
+       release exists, and clicking it downloads, installs, and restarts.

@@ -1,5 +1,5 @@
 // Dashboard: stats, language breakdown, due-for-review, recently added.
-import { el, esc, langBadge, famBadge, isDue } from "../dom.js";
+import { el, esc, langBadge, famBadge, catBadge, isDue } from "../dom.js";
 import { langColor } from "../constants.js";
 import { exportVault, importVault } from "../data.js";
 
@@ -154,7 +154,7 @@ function shardRow(s, ctx) {
       ${langBadge(s.language)}
       <span class="title">${esc(s.title) || "(untitled)"}</span>
       ${s.reviewEnabled ? '<span class="review-dot">●</span>' : ""}
-      <span class="cat">${esc(s.category)}</span>
+      ${catBadge(s.category)}
       ${famBadge(s.familiarity)}
       <button class="btn mini review-btn" title="Review this card (no answer shown first)">Review</button>
     </div>

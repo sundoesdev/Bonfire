@@ -3,6 +3,7 @@
 
 export const DEFAULT_LANGUAGES = [
   "C", "C++", "C#", "Lua", "Python", "Bash", "Rust", "JavaScript", "TypeScript",
+  "WebDev (HTML/CSS/JS)",
   "Git", "Docker", "SQL", "Go", "Ruby", "Java", "CSS", "HTML", "PHP", "Kotlin",
   "Swift", "Zig", "Haskell", "Perl", "R", "Scala", "Shell", "PowerShell",
   "YAML", "JSON", "TOML", "Makefile", "Assembly", "Vim", "Nix", "KQL",
@@ -21,7 +22,7 @@ export const FAMILIARITY_ORDER = ["shaky", "fresh", "solid", "mastered"];
 const LANG_COLORS = {
   "C": "#555555", "C++": "#f34b7d", "C#": "#178600", "Lua": "#000080",
   "Python": "#3572A5", "Bash": "#89e051", "Rust": "#dea584",
-  "JavaScript": "#f1e05a", "TypeScript": "#3178c6", "Git": "#F05032",
+  "JavaScript": "#f1e05a", "TypeScript": "#3178c6", "WebDev (HTML/CSS/JS)": "#e34c26", "Git": "#F05032",
   "Docker": "#384d54", "SQL": "#e38c00", "Go": "#00ADD8", "Ruby": "#701516",
   "Java": "#b07219", "CSS": "#563d7c", "HTML": "#e34c26", "PHP": "#4F5D95",
   "Kotlin": "#A97BFF", "Swift": "#F05138", "Zig": "#ec915c", "Haskell": "#5e5086",
@@ -50,7 +51,7 @@ export function famColor(fam) {
 const HLJS_LANG = {
   "C": "c", "C++": "cpp", "C#": "csharp", "Lua": "lua", "Python": "python",
   "Bash": "bash", "Rust": "rust", "JavaScript": "javascript",
-  "TypeScript": "typescript", "Git": "bash", "Docker": "dockerfile",
+  "TypeScript": "typescript", "WebDev (HTML/CSS/JS)": "xml", "Git": "bash", "Docker": "dockerfile",
   "SQL": "sql", "Go": "go", "Ruby": "ruby", "Java": "java", "CSS": "css",
   "HTML": "xml", "PHP": "php", "Kotlin": "kotlin", "Swift": "swift",
   "Haskell": "haskell", "Perl": "perl", "R": "r", "Scala": "scala",
@@ -61,6 +62,45 @@ const HLJS_LANG = {
 
 export function hljsLang(lang) {
   return HLJS_LANG[lang] || null;
+}
+
+// Maps our display language names to CodeMirror 5 mode strings / MIME types
+// (the vendored modes in index.html). null → plain text (still a usable editor).
+const CM_MODE = {
+  "C": "text/x-csrc",
+  "C++": "text/x-c++src",
+  "C#": "text/x-csharp",
+  "Java": "text/x-java",
+  "Kotlin": "text/x-kotlin",
+  "Scala": "text/x-scala",
+  "Swift": "swift",
+  "JavaScript": "javascript",
+  "TypeScript": "application/typescript",
+  "JSON": "application/json",
+  "WebDev (HTML/CSS/JS)": "htmlmixed",
+  "HTML": "htmlmixed",
+  "CSS": "css",
+  "Python": "python",
+  "Bash": "shell",
+  "Shell": "shell",
+  "Git": "shell",
+  "PowerShell": "powershell",
+  "Rust": "rust",
+  "Go": "go",
+  "Ruby": "ruby",
+  "PHP": "php",
+  "SQL": "sql",
+  "Docker": "dockerfile",
+  "Lua": "lua",
+  "Perl": "perl",
+  "Haskell": "haskell",
+  "R": "r",
+  "YAML": "yaml",
+  "TOML": "toml",
+};
+
+export function cmMode(lang) {
+  return CM_MODE[lang] || null;
 }
 
 // ---- Subject presets ----
@@ -173,3 +213,76 @@ export function toggleTag(tags, tag, on) {
   if (on) out.push(tag);
   return out;
 }
+
+// ---- Spaced-repetition algorithm ----
+// The active scheduler is a global setting (key `sr_algorithm`); SM-2 and FSRS
+// each have a JSON params blob (`sm2_params` / `fsrs_params`). The defaults here
+// mirror the Rust-side defaults (sm2.rs Sm2Config / fsrs.rs FsrsConfig).
+export const SR_ALGORITHMS = [
+  { id: "sm2", label: "SM-2 — classic SuperMemo (default)" },
+  { id: "fsrs", label: "FSRS — Free Spaced Repetition Scheduler" },
+];
+export const DEFAULT_ALGORITHM = "sm2";
+
+export const SM2_DEFAULTS = {
+  easeFloor: 1.3,
+  intervalModifier: 1.0,
+  hardMultiplier: 1.2,
+};
+
+// FSRS-4.5 published default weights (17). Kept in sync with fsrs.rs.
+export const FSRS_DEFAULT_WEIGHTS = [
+  0.4072, 1.1829, 3.1262, 15.4722, 7.2102, 0.5316, 1.0651, 0.0234, 1.616, 0.1544,
+  1.0824, 1.9813, 0.0953, 0.2975, 2.2042, 0.2407, 2.9466,
+];
+
+export const FSRS_DEFAULTS = {
+  requestRetention: 0.9,
+  weights: FSRS_DEFAULT_WEIGHTS,
+};
+
+// ---- Media attachments ----
+// Cards can carry inline image/audio attachments (base64 data-URLs) on either
+// the question or the answer side, orthogonal to card_type. See models.rs MediaItem.
+export const MEDIA_KINDS = { image: "Image", audio: "Audio" };
+export const MEDIA_SIDES = [
+  { id: "question", label: "Question side" },
+  { id: "answer", label: "Answer side" },
+];
+
+// ---- Card templates ----
+// Reusable starting points for fast authoring. Stored (with any user-defined
+// ones) in the `card_templates` setting; these are the built-in seeds. A template
+// prefills the editor/quick-capture fields. `tags` is a comma-separated string.
+export const BUILTIN_TEMPLATES = [
+  {
+    id: "builtin-code-qa",
+    name: "Question → Answer",
+    cardType: "basic",
+    language: "",
+    tags: "",
+    prompt: "What does this do / how do you …?",
+    code: "",
+    description: "",
+  },
+  {
+    id: "builtin-vocab",
+    name: "Vocab term",
+    cardType: "reverse",
+    language: "",
+    tags: "vocab",
+    prompt: "Define / translate the term.",
+    code: "",
+    description: "",
+  },
+  {
+    id: "builtin-cloze",
+    name: "Cloze note",
+    cardType: "cloze",
+    language: "",
+    tags: "",
+    prompt: "Fill in the blanks.",
+    code: "The {{c1::capital}} of France is {{c2::Paris}}.",
+    description: "",
+  },
+];

@@ -1,5 +1,33 @@
 use serde::{Deserialize, Serialize};
 
+/// An inline media attachment on a card (image or audio), stored as a base64
+/// data-URL so the whole vault stays in a single JSON export with no asset
+/// folder. `side` controls whether it shows with the question or the answer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct MediaItem {
+    pub id: String,
+    /// "image" or "audio".
+    pub kind: String,
+    /// `data:<mime>;base64,...`
+    pub data_url: String,
+    pub caption: String,
+    /// "question" (shown with the prompt) or "answer" (shown on reveal).
+    pub side: String,
+}
+
+impl Default for MediaItem {
+    fn default() -> Self {
+        MediaItem {
+            id: String::new(),
+            kind: "image".to_string(),
+            data_url: String::new(),
+            caption: String::new(),
+            side: "question".to_string(),
+        }
+    }
+}
+
 /// Core entity: a "shard" — a code snippet with study metadata.
 /// Field names are camelCase on the JS side; `rename_all` bridges that to
 /// snake_case Rust fields. `#[serde(default)]` lets partial JSON (e.g. older
@@ -34,6 +62,16 @@ pub struct Shard {
     pub review_ease: f64,
     /// "YYYY-MM-DD" of the next scheduled review (empty until enabled).
     pub review_next: String,
+    /// FSRS memory stability (days). 0 until the card's first FSRS review.
+    pub fsrs_stability: f64,
+    /// FSRS difficulty, 1..=10. 0 until the card's first FSRS review.
+    pub fsrs_difficulty: f64,
+    /// FSRS learning state: "new" / "learning" / "review" / "relearning".
+    pub fsrs_state: String,
+    /// Number of times the card has been forgotten (lapsed).
+    pub lapses: i64,
+    /// Inline image/audio attachments.
+    pub media: Vec<MediaItem>,
 }
 
 impl Default for Shard {
@@ -60,6 +98,11 @@ impl Default for Shard {
             review_repetitions: 0,
             review_ease: 2.5,
             review_next: String::new(),
+            fsrs_stability: 0.0,
+            fsrs_difficulty: 0.0,
+            fsrs_state: "new".to_string(),
+            lapses: 0,
+            media: Vec::new(),
         }
     }
 }
@@ -92,11 +135,59 @@ impl Default for Deck {
     }
 }
 
-/// Shape of the JSON export file: all shards, decks, and the user's custom languages.
+/// One recorded review event, used for the study heatmap / streak analytics.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ReviewLogEntry {
+    pub shard_id: String,
+    pub deck_id: String,
+    /// "YYYY-MM-DD" (local) — the day bucket for the heatmap.
+    pub day: String,
+    /// Full RFC-3339 timestamp.
+    pub ts: String,
+    pub rating: String,
+    pub algorithm: String,
+    /// Milliseconds spent on the card before grading (0 if not recorded).
+    pub duration_ms: i64,
+    /// Id of the study session this review belonged to (for per-day session counts).
+    pub session_id: String,
+}
+
+/// A day's review count, returned to the frontend for the heatmap.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DayCount {
+    pub day: String,
+    pub count: i64,
+}
+
+/// Per-deck review count within a day (for the heatmap tooltip).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DeckCount {
+    pub deck_id: String,
+    pub count: i64,
+}
+
+/// Rich per-day study detail for the heatmap hover tooltip (item 8).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DayDetail {
+    pub day: String,
+    pub count: i64,
+    pub duration_ms: i64,
+    /// Number of distinct study sessions that day.
+    pub sessions: i64,
+    pub deck_counts: Vec<DeckCount>,
+}
+
+/// Shape of the JSON export file: all shards, decks, custom languages, and the
+/// review history (so the heatmap/streak data survives a backup round-trip).
 #[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct VaultExport {
     pub shards: Vec<Shard>,
     pub custom_languages: Vec<String>,
     pub decks: Vec<Deck>,
+    pub review_log: Vec<ReviewLogEntry>,
 }

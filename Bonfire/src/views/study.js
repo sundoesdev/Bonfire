@@ -1,8 +1,29 @@
 // Study: active-recall testing. A configurable, editable, due-first queue of cards;
 // each card shows a question, you type an answer, reveal + compare, then self-grade (SM-2).
 import { el, esc, langBadge, metaBadges, isDue, enableTab, todayStr } from "../dom.js";
-import { DIFFICULTIES, FAMILIARITY_ORDER, getDifficulty, isFoundation, isRevealOnly } from "../constants.js";
+import { DIFFICULTIES, FAMILIARITY_ORDER, getDifficulty, isFoundation, isRevealOnly, cmMode } from "../constants.js";
 import { highlightInto } from "../highlight.js";
+import { mdLite } from "../markdown.js";
+
+// Whether the CodeMirror answer editor starts in VIM mode (persisted `editor_vim`).
+let vimEnabled = false;
+
+// Markup for a card's attachments on one side ("question" or "answer").
+function mediaHtml(media, side) {
+  const items = (media || []).filter((m) => (m.side || "question") === side);
+  if (!items.length) return "";
+  const cells = items
+    .map((m) => {
+      const cap = m.caption ? `<div class="muted media-cap">${mdLite(m.caption)}</div>` : "";
+      const body =
+        m.kind === "image"
+          ? `<img class="study-image" src="${esc(m.dataUrl)}" alt="${esc(m.caption || "image")}" />`
+          : `<audio controls src="${esc(m.dataUrl)}"></audio>`;
+      return `<div class="media-view-item">${body}${cap}</div>`;
+    })
+    .join("");
+  return `<div class="study-media">${cells}</div>`;
+}
 
 const CONFIG_KEY = "daily_study";
 const PROGRESS_KEY = "study_progress";
@@ -169,7 +190,10 @@ function buildWeakQueue(shards, cfg) {
 
 // ---------- Shared config form (used by setup screen + Settings) ----------
 // Returns { node, collect } where collect() reads the current values into a config object.
-export function buildStudyConfigForm(ctx, cfg) {
+export function buildStudyConfigForm(ctx, cfg, opts = {}) {
+  // Daily new/review caps only show in Settings (item 5); the Study setup screen
+  // asks only for max time + max cards.
+  const showCaps = !!opts.showDailyCaps;
   const langs = ctx.languages();
   const allTags = [...new Set(ctx.state.shards.flatMap((s) => s.tags || []))].sort();
 
@@ -188,10 +212,13 @@ export function buildStudyConfigForm(ctx, cfg) {
       <div class="panel">
         <div class="section-title">Session limits</div>
         <div class="form-grid">
-          <label>Time limit (min)</label>
+          <label>Max time (min)</label>
           <input type="text" id="c-time" value="${cfg.timeLimitMinutes}" />
           <label>Max cards</label>
           <input type="text" id="c-max" value="${cfg.maxCards}" />
+          ${
+            showCaps
+              ? `
           <label>New cards / day</label>
           <div class="row" style="gap:8px">
             <label class="chk"><input type="checkbox" id="c-limitnew" ${cfg.limitNew ? "checked" : ""}/> Limit to</label>
@@ -201,9 +228,15 @@ export function buildStudyConfigForm(ctx, cfg) {
           <div class="row" style="gap:8px">
             <label class="chk"><input type="checkbox" id="c-limitrev" ${cfg.limitReviews ? "checked" : ""}/> Limit to</label>
             <input type="text" id="c-revper" value="${cfg.reviewsPerDay}" style="width:64px" />
-          </div>
+          </div>`
+              : ""
+          }
         </div>
-        <div class="muted" style="margin-bottom:8px">Daily caps count new cards and reviews across all of today's sessions; Cram mode ignores them.</div>
+        <div class="muted" style="margin-bottom:8px">${
+          showCaps
+            ? "Daily caps count new cards and reviews across all of today's sessions; Cram mode ignores them."
+            : "Max time is the budget for the session — the timer keeps counting into the negative until you end it. Daily new/review caps live in Settings."
+        }</div>
         <label class="chk"><input type="checkbox" id="c-cram" ${cfg.cram ? "checked" : ""}/> Cram mode (ignore due dates — practice the whole set)</label>
         <br/>
         <label class="chk"><input type="checkbox" id="c-preview" ${cfg.showPreview ? "checked" : ""}/> Show editable queue preview before starting (quick-start)</label>
@@ -233,10 +266,10 @@ export function buildStudyConfigForm(ctx, cfg) {
     maxCards: parseInt(node.querySelector("#c-max").value, 10) || 0,
     cram: node.querySelector("#c-cram").checked,
     showPreview: node.querySelector("#c-preview").checked,
-    limitNew: node.querySelector("#c-limitnew").checked,
-    newPerDay: parseInt(node.querySelector("#c-newper").value, 10) || 0,
-    limitReviews: node.querySelector("#c-limitrev").checked,
-    reviewsPerDay: parseInt(node.querySelector("#c-revper").value, 10) || 0,
+    limitNew: showCaps ? node.querySelector("#c-limitnew").checked : cfg.limitNew,
+    newPerDay: showCaps ? parseInt(node.querySelector("#c-newper").value, 10) || 0 : cfg.newPerDay,
+    limitReviews: showCaps ? node.querySelector("#c-limitrev").checked : cfg.limitReviews,
+    reviewsPerDay: showCaps ? parseInt(node.querySelector("#c-revper").value, 10) || 0 : cfg.reviewsPerDay,
     foundationOnly: node.querySelector("#c-foundation").checked,
     languages: readGroup("lang"),
     difficulties: readGroup("diff"),
@@ -248,6 +281,11 @@ export function buildStudyConfigForm(ctx, cfg) {
 
 export async function renderStudy(container, ctx, params = {}) {
   const cfg = await loadConfig(ctx);
+  try {
+    vimEnabled = (await ctx.api.getSetting("editor_vim")) === "true";
+  } catch (_e) {
+    /* default off */
+  }
 
   // Single-card review (from the editor's Review button): one card, no timer.
   if (params.single) {
@@ -295,20 +333,53 @@ export async function renderStudy(container, ctx, params = {}) {
 function renderSetup(container, ctx, cfg, notice) {
   const form = buildStudyConfigForm(ctx, cfg);
 
+  // Deck picker (item 5): study the current deck, another deck, or all at once.
+  const deckOpts = ['<option value="__all__">All decks</option>']
+    .concat(
+      ctx.decks().map(
+        (d) => `<option value="${esc(d.id)}" ${d.id === ctx.currentDeckId() ? "selected" : ""}>${esc(d.name) || "(unnamed)"}</option>`
+      )
+    )
+    .join("");
+
   const root = el(`
     <div>
       <div class="row" style="margin-bottom:14px">
         <h2 style="margin:0;font-size:16px">Study</h2>
+        <span class="muted" id="algo-note" style="margin-left:10px"></span>
         <div class="spacer"></div>
         <button class="btn btn-tool" id="save-default">Save as daily default</button>
         <button class="btn btn-tool" id="weak">Drill weak spots</button>
         <button class="btn btn-primary" id="build">Build queue →</button>
       </div>
       ${notice ? `<div class="panel" style="border-color:#5a4a1f;color:#f5c451">${esc(notice)}</div>` : ""}
+      <div class="panel">
+        <div class="section-title">Deck</div>
+        <select id="study-deck">${deckOpts}</select>
+        <div class="muted" style="margin-top:6px">Study one deck, or pick “All decks” to draw from every deck at once.</div>
+      </div>
       <div id="form-slot"></div>
     </div>
   `);
   root.querySelector("#form-slot").appendChild(form.node);
+
+  // Switching to a specific (different) deck re-scopes the whole view; "All decks"
+  // is handled at build time by drawing from allShards.
+  const deckSel = root.querySelector("#study-deck");
+  const studyPool = () => (deckSel.value === "__all__" ? ctx.state.allShards : ctx.state.shards);
+  deckSel.addEventListener("change", () => {
+    const v = deckSel.value;
+    if (v !== "__all__" && v !== ctx.currentDeckId()) ctx.setDeck(v);
+  });
+
+  // Show which scheduling algorithm is active (set in Settings → Spaced repetition).
+  ctx.api
+    .getSetting("sr_algorithm")
+    .then((a) => {
+      const note = root.querySelector("#algo-note");
+      if (note) note.textContent = `Scheduling: ${(a || "sm2").toUpperCase()}`;
+    })
+    .catch(() => {});
 
   root.querySelector("#save-default").addEventListener("click", async () => {
     await saveConfig(ctx, form.collect());
@@ -317,7 +388,7 @@ function renderSetup(container, ctx, cfg, notice) {
 
   root.querySelector("#weak").addEventListener("click", () => {
     const next = form.collect();
-    const queue = buildWeakQueue(ctx.state.shards, next);
+    const queue = buildWeakQueue(studyPool(), next);
     if (!queue.length) {
       renderSetup(container, ctx, next, "No cards to drill — loosen the filters.");
       return;
@@ -328,7 +399,7 @@ function renderSetup(container, ctx, cfg, notice) {
   root.querySelector("#build").addEventListener("click", async () => {
     const next = form.collect();
     const progress = await loadProgress(ctx);
-    const queue = buildQueue(ctx.state.shards, next, progress);
+    const queue = buildQueue(studyPool(), next, progress);
     if (!queue.length) {
       renderSetup(container, ctx, next, "No cards match — nothing due (try Cram mode), daily caps reached, or loosen filters.");
       return;
@@ -439,6 +510,10 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
     index: 0,
     startMs: Date.now(),
     limitMs,
+    // Unique id for this session (per-day session counts in the heatmap) + the
+    // moment the current card was shown (per-card time spent).
+    sessionId: `sess-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    cardShownMs: Date.now(),
     stats: { reviewed: 0, forgot: 0, advanced: 0 },
   };
 
@@ -473,6 +548,7 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       return;
     }
     const root = card(session.queue[session.index]);
+    session.cardShownMs = Date.now();
     container.innerHTML = "";
     container.appendChild(root);
     startTimer(root);
@@ -481,8 +557,9 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
   function gradeAndAdvance(s, rating) {
     return async () => {
       const wasNew = isNewCard(s);
+      const durationMs = Math.max(0, Date.now() - (session.cardShownMs || Date.now()));
       try {
-        await ctx.api.submitReview(s.id, rating);
+        await ctx.api.submitReview(s.id, rating, durationMs, session.sessionId);
       } catch (_e) {
         /* keep going even if persistence fails */
       }
@@ -507,6 +584,8 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
     const type = s.cardType || "basic";
     const isCloze = type === "cloze" && hasClozeMarkers(s.code);
     const isReverse = type === "reverse";
+    // Non-code decks (prose/vocab) render the answer as markdown, not highlighted code.
+    const highlight = ctx.currentPreset().highlight;
 
     // Reverse cards hide the title (it's the thing to recall); other types show it.
     const headerHtml = isReverse
@@ -524,7 +603,7 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
         <div class="review-card">
           <div class="row">${langBadge(s.language)} ${metaBadges(s.tags)} ${cardTypeBadge(type)}</div>
           ${headerHtml}
-          ${s.prompt ? `<div class="desc" style="margin-bottom:6px">${esc(s.prompt)}</div>` : ""}
+          ${s.prompt ? `<div class="desc markdown-body" style="margin-bottom:6px">${mdLite(s.prompt)}</div>` : ""}
           <div id="question-extra"></div>
           <hr class="sep" />
           <div id="answer-area"></div>
@@ -551,6 +630,8 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       questionExtra.innerHTML = '<pre class="code-block"><code id="reverse-q"></code></pre>';
       highlightInto(questionExtra.querySelector("#reverse-q"), s.code, s.language);
     }
+    // Question-side attachments (shown before answering), any card type.
+    questionExtra.insertAdjacentHTML("beforeend", mediaHtml(s.media, "question"));
 
     function showReveal(typed) {
       // The "correct answer" pane varies by card type.
@@ -559,8 +640,11 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
         answerPaneHtml = `<div class="cloze-text reveal">${clozeHtml(s.code, "reveal")}</div>`;
       } else if (isReverse) {
         answerPaneHtml = `<pre class="code-block"><code id="answer">${esc(s.title)}</code></pre>`;
-      } else {
+      } else if (highlight) {
         answerPaneHtml = `<pre class="code-block"><code id="answer"></code></pre>`;
+      } else {
+        // Prose/vocab deck: render the answer as markdown-lite, not code.
+        answerPaneHtml = `<div class="markdown-body answer-prose" id="answer-prose">${mdLite(s.code)}</div>`;
       }
 
       answerArea.innerHTML = `
@@ -572,16 +656,17 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
           }
           <div class="compare-col"><div class="section-title">Answer</div>${answerPaneHtml}</div>
         </div>
-        ${s.description ? `<div class="section-title" style="margin-top:10px">Notes</div><div class="desc">${esc(s.description)}</div>` : ""}
+        ${mediaHtml(s.media, "answer")}
+        ${s.description ? `<div class="section-title" style="margin-top:10px">Notes</div><div class="desc markdown-body">${mdLite(s.description)}</div>` : ""}
       `;
       if (!revealOnly) {
         const typedEl = answerArea.querySelector("#typed");
-        // Cloze/reverse answers aren't code — render the typed text plainly.
-        if (isCloze || isReverse) typedEl.textContent = typed || "(blank)";
+        // Cloze/reverse and prose answers aren't code — render the typed text plainly.
+        if (isCloze || isReverse || !highlight) typedEl.textContent = typed || "(blank)";
         else highlightInto(typedEl, typed || "(blank)", s.language);
       }
-      // Basic cards highlight the stored answer; cloze/reverse already filled it.
-      if (!isCloze && !isReverse) {
+      // Basic code cards highlight the stored answer; cloze/reverse/prose already filled it.
+      if (!isCloze && !isReverse && highlight) {
         highlightInto(answerArea.querySelector("#answer"), s.code, s.language);
       }
 
@@ -609,19 +694,49 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
         : isReverse
           ? "Type the title / term, then Submit (Ctrl+Enter)"
           : "Type your answer, then Submit (Ctrl+Enter)";
-      answerArea.innerHTML = `<textarea class="code-editor" id="type-answer" spellcheck="false" placeholder="${esc(ph)}"></textarea>`;
+      // Code answers (highlighting decks, non-cloze/reverse) get a CodeMirror
+      // editor with live syntax highlighting + optional VIM (items 6 & 7).
+      const useCM = highlight && !isCloze && !isReverse && !!window.CodeMirror;
+      answerArea.innerHTML = `
+        ${useCM ? `<label class="chk editor-vim-toggle"><input type="checkbox" id="vim-toggle" ${vimEnabled ? "checked" : ""}/> VIM mode</label>` : ""}
+        <textarea class="code-editor" id="type-answer" spellcheck="false" placeholder="${esc(ph)}"></textarea>`;
       controls.innerHTML = '<button class="btn btn-primary full-width" id="submit">Submit ▶</button>';
       const ta = answerArea.querySelector("#type-answer");
-      enableTab(ta);
-      const submit = () => showReveal(ta.value);
+      let cm = null;
+      const getValue = () => (cm ? cm.getValue() : ta.value);
+      const submit = () => showReveal(getValue());
+      if (useCM) {
+        cm = window.CodeMirror.fromTextArea(ta, {
+          mode: cmMode(s.language) || "text/plain",
+          lineNumbers: false,
+          lineWrapping: true,
+          viewportMargin: Infinity,
+          keyMap: vimEnabled ? "vim" : "default",
+          extraKeys: { "Ctrl-Enter": submit },
+        });
+        const vimToggle = answerArea.querySelector("#vim-toggle");
+        vimToggle.addEventListener("change", async () => {
+          vimEnabled = vimToggle.checked;
+          cm.setOption("keyMap", vimEnabled ? "vim" : "default");
+          cm.focus();
+          try {
+            await ctx.api.setSetting("editor_vim", vimEnabled ? "true" : "false");
+          } catch (_e) {
+            /* ignore */
+          }
+        });
+        setTimeout(() => cm.focus(), 0);
+      } else {
+        enableTab(ta);
+        ta.addEventListener("keydown", (e) => {
+          if (e.ctrlKey && e.key === "Enter") {
+            e.preventDefault();
+            submit();
+          }
+        });
+        setTimeout(() => ta.focus(), 0);
+      }
       controls.querySelector("#submit").addEventListener("click", submit);
-      ta.addEventListener("keydown", (e) => {
-        if (e.ctrlKey && e.key === "Enter") {
-          e.preventDefault();
-          submit();
-        }
-      });
-      setTimeout(() => ta.focus(), 0);
     }
 
     root.querySelector("#skip").addEventListener("click", () => {

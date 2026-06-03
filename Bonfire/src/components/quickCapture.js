@@ -11,6 +11,8 @@ import {
   setDifficulty,
   toggleTag,
 } from "../constants.js";
+import { buildMediaEditor } from "./mediaEditor.js";
+import { loadTemplates } from "../templates.js";
 
 function parseTags(raw) {
   return [
@@ -44,7 +46,11 @@ export function openQuickCapture(ctx) {
   const backdrop = el(`
     <div class="modal-backdrop">
       <div class="modal">
-        <h2>Quick Capture</h2>
+        <div class="row" style="align-items:center">
+          <h2 style="margin:0">Quick Capture</h2>
+          <div class="spacer"></div>
+          <select id="qc-template" title="Prefill from a template"><option value="">Template…</option></select>
+        </div>
         <div class="field">
           <label>Title *</label>
           <input type="text" id="qc-title" placeholder="e.g., Hello world in C" />
@@ -63,6 +69,7 @@ export function openQuickCapture(ctx) {
           <select id="qc-cardtype">${cardTypeOptions("basic")}</select>
         </div>
         <div class="vlist" style="margin-bottom:10px">
+          <label class="chk"><input type="checkbox" id="qc-review" checked /> Add to review queue</label>
           <label class="chk"><input type="checkbox" id="qc-foundation" /> Foundation</label>
           <label class="chk"><input type="checkbox" id="qc-revealonly" /> Reveal-only</label>
         </div>
@@ -74,6 +81,7 @@ export function openQuickCapture(ctx) {
           <label>${esc(preset.answerLabel)} *</label>
           <textarea id="qc-code" class="code-editor" style="min-height:140px" spellcheck="false" placeholder="${esc(preset.answerPlaceholder)}"></textarea>
         </div>
+        <div id="qc-media-slot"></div>
         <div class="actions">
           <button class="btn btn-tool" id="qc-cancel">Cancel</button>
           <button class="btn btn-primary" id="qc-save">Save Shard</button>
@@ -107,6 +115,42 @@ export function openQuickCapture(ctx) {
     applyControlToField((t) => toggleTag(t, REVEAL_ONLY_TAG, revealChk.checked))
   );
 
+  // Attachments editor (images/audio) + paste-to-add.
+  const media = buildMediaEditor([]);
+  backdrop.querySelector("#qc-media-slot").appendChild(media.node);
+  backdrop.addEventListener("paste", media.handlePaste);
+
+  // Templates: populate the dropdown and prefill on selection.
+  const cardTypeSel = backdrop.querySelector("#qc-cardtype");
+  const promptInput = backdrop.querySelector("#qc-prompt");
+  const codeInput = backdrop.querySelector("#qc-code");
+  const langInput = backdrop.querySelector("#qc-lang"); // absent for non-code presets
+  const templateSel = backdrop.querySelector("#qc-template");
+  let templates = [];
+  loadTemplates(ctx).then((list) => {
+    templates = list;
+    for (const t of list) {
+      const o = document.createElement("option");
+      o.value = t.id;
+      o.textContent = t.name;
+      templateSel.appendChild(o);
+    }
+  });
+  templateSel.addEventListener("change", () => {
+    const t = templates.find((x) => x.id === templateSel.value);
+    templateSel.value = "";
+    if (!t) return;
+    const dirty = promptInput.value.trim() || codeInput.value.trim() || tagsInput.value.trim();
+    if (dirty && !confirm(`Apply template "${t.name}"? This overwrites the current prompt, answer, tags, and card type.`))
+      return;
+    promptInput.value = t.prompt || "";
+    codeInput.value = t.code || "";
+    if (langInput && t.language) langInput.value = t.language;
+    cardTypeSel.value = t.cardType || "basic";
+    tagsInput.value = t.tags || "";
+    controlsFromField();
+  });
+
   function close() {
     root.innerHTML = "";
     document.removeEventListener("keydown", onKey);
@@ -126,26 +170,27 @@ export function openQuickCapture(ctx) {
       alert("Title and answer (code) are required.");
       return;
     }
-    const langEl = backdrop.querySelector("#qc-lang"); // absent for non-code presets
+    const review = backdrop.querySelector("#qc-review").checked;
     await ctx.api.saveShard({
       id: "",
       title,
-      prompt: backdrop.querySelector("#qc-prompt").value.trim(),
-      language: langEl ? langEl.value : "",
+      prompt: promptInput.value.trim(),
+      language: langInput ? langInput.value : "",
       code,
       description: "",
       deckId: ctx.currentDeckId(),
-      cardType: backdrop.querySelector("#qc-cardtype").value,
+      cardType: cardTypeSel.value,
       tags: parseTags(tagsInput.value),
       category: "snippet",
       familiarity: "fresh",
       source: "",
       relatedIds: [],
-      reviewEnabled: false,
+      media: media.getItems(),
+      reviewEnabled: review,
       reviewInterval: 0,
       reviewRepetitions: 0,
       reviewEase: 2.5,
-      reviewNext: "",
+      reviewNext: review ? new Date().toISOString().slice(0, 10) : "",
     });
     close();
     ctx.navigate(document.querySelector("#sidebar nav button.active")?.dataset.view || "dashboard");

@@ -11,8 +11,11 @@ export const deleteAllShards = () => invoke("delete_all_shards");
 export const listDecks = () => invoke("list_decks");
 export const saveDeck = (deck) => invoke("save_deck", { deck });
 export const deleteDeck = (id) => invoke("delete_deck", { id });
-export const submitReview = (id, rating) => invoke("submit_review", { id, rating });
+export const submitReview = (id, rating, durationMs, sessionId) =>
+  invoke("submit_review", { id, rating, durationMs, sessionId });
 export const markReviewed = (id) => invoke("mark_reviewed", { id });
+export const reviewHistory = () => invoke("review_history");
+export const studyDays = () => invoke("study_days");
 export const renameTag = (oldName, newName) => invoke("rename_tag", { old: oldName, new: newName });
 export const deleteTag = (tag) => invoke("delete_tag", { tag });
 export const getSetting = (key) => invoke("get_setting", { key });

@@ -14,6 +14,9 @@ import {
   toggleTag,
 } from "../constants.js";
 import { highlightInto } from "../highlight.js";
+import { mdLite } from "../markdown.js";
+import { buildMediaEditor } from "../components/mediaEditor.js";
+import { loadTemplates } from "../templates.js";
 
 const ADD_CUSTOM = "__add_custom__";
 
@@ -35,12 +38,38 @@ function blankShard() {
     createdAt: "",
     modifiedAt: "",
     lastReviewed: "",
-    reviewEnabled: false,
+    reviewEnabled: true,
     reviewInterval: 0,
     reviewRepetitions: 0,
     reviewEase: 2.5,
     reviewNext: "",
+    fsrsStability: 0,
+    fsrsDifficulty: 0,
+    fsrsState: "new",
+    lapses: 0,
+    media: [],
   };
+}
+
+// Read-only attachments markup for View mode, grouped by side.
+function mediaViewHtml(media) {
+  if (!media || !media.length) return "";
+  const block = (side, title) => {
+    const its = media.filter((m) => (m.side || "question") === side);
+    if (!its.length) return "";
+    const cells = its
+      .map((m) => {
+        const cap = m.caption ? `<div class="muted media-cap">${mdLite(m.caption)}</div>` : "";
+        const el =
+          m.kind === "image"
+            ? `<img class="study-image" src="${esc(m.dataUrl)}" alt="${esc(m.caption || "image")}" />`
+            : `<audio controls src="${esc(m.dataUrl)}"></audio>`;
+        return `<div class="media-view-item">${el}${cap}</div>`;
+      })
+      .join("");
+    return `<div class="section-title" style="margin-top:12px">${title}</div><div class="media-view">${cells}</div>`;
+  };
+  return block("question", "Attachments (question)") + block("answer", "Attachments (answer)");
 }
 
 function parseTags(raw) {
@@ -87,16 +116,17 @@ export function renderEditor(container, ctx, params = {}) {
           <button class="btn btn-tool" id="edit">Edit</button>
         </div>
         <div class="title-big">${esc(shard.title) || "(untitled)"}</div>
-        ${shard.prompt ? `<div class="desc" style="margin-bottom:8px">${esc(shard.prompt)}</div>` : ""}
+        ${shard.prompt ? `<div class="desc markdown-body" style="margin-bottom:8px">${mdLite(shard.prompt)}</div>` : ""}
         <div class="meta-line">${esc(meta)} ${metaBadges(shard.tags)}${
           shard.reviewEnabled && shard.reviewNext ? " · Review: " + esc(shard.reviewNext) : ""
         }</div>
         <pre class="code-block"><code id="code"></code></pre>
         ${
           shard.description
-            ? `<div class="section-title">Description</div><div class="desc">${esc(shard.description)}</div>`
+            ? `<div class="section-title">Description</div><div class="desc markdown-body">${mdLite(shard.description)}</div>`
             : ""
         }
+        ${mediaViewHtml(shard.media)}
         ${shard.source ? `<div class="muted" style="margin-top:10px">Source: ${esc(shard.source)}</div>` : ""}
         ${
           (shard.tags || []).length
@@ -168,6 +198,7 @@ export function renderEditor(container, ctx, params = {}) {
         <div class="toolbar">
           <button class="btn btn-tool" id="back">← Back</button>
           <div class="spacer"></div>
+          <select id="f-template" title="Prefill from a template"><option value="">Template…</option></select>
           <button class="btn btn-tool" id="cancel">Cancel</button>
           <button class="btn btn-primary" id="save">Save</button>
         </div>
@@ -195,15 +226,21 @@ export function renderEditor(container, ctx, params = {}) {
           <label>Tags</label>
           <input type="text" id="f-tags" placeholder="Comma-separated: networking, advanced, foundation" value="${esc(renderTags(shard.tags || []))}" />
           <label>Review</label>
-          <button type="button" class="btn btn-toggle ${shard.reviewEnabled ? "on" : ""}" id="f-review">Enable Spaced Repetition</button>
+          <button type="button" class="btn btn-toggle ${shard.reviewEnabled ? "on" : ""}" id="f-review">In review queue</button>
         </div>
         <div class="section-title">${esc(preset.answerLabel)} *</div>
         <div class="muted" id="cardtype-hint" style="margin-bottom:6px;display:none">For cloze cards, wrap the words to hide in <code>{{c1::double braces}}</code>. They'll be blanked out during study.</div>
         <textarea class="code-editor" id="f-code" spellcheck="false" placeholder="${esc(preset.answerPlaceholder)}">${esc(shard.code)}</textarea>
         <div class="section-title" style="margin-top:12px">Description</div>
-        <textarea id="f-desc" style="width:100%;min-height:80px" placeholder="Why does this work? When would you use it?">${esc(shard.description)}</textarea>
+        <textarea id="f-desc" style="width:100%;min-height:80px" placeholder="Why does this work? When would you use it? (markdown-lite: **bold**, *italic*, \`code\`)">${esc(shard.description)}</textarea>
+        <div id="f-media-slot"></div>
       </div>
     `);
+
+    // Attachments editor (images/audio), shared with quick-capture.
+    const media = buildMediaEditor(shard.media || []);
+    root.querySelector("#f-media-slot").appendChild(media.node);
+    root.addEventListener("paste", media.handlePaste);
 
     enableTab(root.querySelector("#f-code"));
     const langSel = root.querySelector("#f-lang"); // null for non-code presets
@@ -270,6 +307,37 @@ export function renderEditor(container, ctx, params = {}) {
     cardTypeSel.addEventListener("change", syncCardTypeHint);
     syncCardTypeHint();
 
+    // ---- Templates: populate the dropdown and prefill fields on selection ----
+    const templateSel = root.querySelector("#f-template");
+    let templates = [];
+    loadTemplates(ctx).then((list) => {
+      templates = list;
+      for (const t of list) {
+        const o = document.createElement("option");
+        o.value = t.id;
+        o.textContent = t.name;
+        templateSel.appendChild(o);
+      }
+    });
+    templateSel.addEventListener("change", () => {
+      const t = templates.find((x) => x.id === templateSel.value);
+      templateSel.value = "";
+      if (!t) return;
+      const promptEl = root.querySelector("#f-prompt");
+      const codeEl = root.querySelector("#f-code");
+      const dirty = promptEl.value.trim() || codeEl.value.trim() || tagsInput.value.trim();
+      if (dirty && !confirm(`Apply template "${t.name}"? This overwrites the current prompt, answer, tags, and card type.`))
+        return;
+      promptEl.value = t.prompt || "";
+      codeEl.value = t.code || "";
+      root.querySelector("#f-desc").value = t.description || "";
+      if (langSel && t.language) langSel.value = t.language;
+      cardTypeSel.value = t.cardType || "basic";
+      tagsInput.value = t.tags || "";
+      controlsFromField();
+      syncCardTypeHint();
+    });
+
     root.querySelector("#back").addEventListener("click", () => ctx.navigate("library"));
     root.querySelector("#cancel").addEventListener("click", () => {
       if (isNew) {
@@ -291,7 +359,6 @@ export function renderEditor(container, ctx, params = {}) {
         alert("Answer (code) is required.");
         return;
       }
-      const wasEnabled = shard.reviewEnabled;
       const updated = {
         ...shard,
         title,
@@ -304,9 +371,11 @@ export function renderEditor(container, ctx, params = {}) {
         tags: parseTags(tagsInput.value),
         code,
         description: root.querySelector("#f-desc").value,
+        media: media.getItems(),
         reviewEnabled,
       };
-      if (reviewEnabled && !wasEnabled && !updated.reviewNext) {
+      // Cards default into the review queue; ensure a due date the first time it's enabled.
+      if (reviewEnabled && !updated.reviewNext) {
         updated.reviewNext = new Date().toISOString().slice(0, 10);
       }
       const saved = await ctx.api.saveShard(updated);

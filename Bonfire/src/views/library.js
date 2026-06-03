@@ -1,5 +1,5 @@
 // Library: fuzzy search + language/category/familiarity/tag filters + 3 sort modes.
-import { el, esc, langBadge, famBadge, metaBadges } from "../dom.js";
+import { el, esc, langBadge, famBadge, metaBadges, catBadge } from "../dom.js";
 import { CATEGORIES, FAMILIARITIES, FAMILIARITY_ORDER } from "../constants.js";
 
 // Concatenated searchable text for a shard (title, language, category, tags, desc, code).
@@ -89,7 +89,7 @@ export function renderLibrary(container, ctx, params = {}) {
           <span class="title">${esc(s.title) || "(untitled)"}</span>
           ${metaBadges(s.tags)}
           ${s.reviewEnabled ? '<span class="review-dot">●</span>' : ""}
-          <span class="cat">${esc(s.category)}</span>
+          ${catBadge(s.category)}
           ${famBadge(s.familiarity)}
           <button class="btn mini review-btn" title="Review this card (no answer shown first)">Review</button>
         </div>

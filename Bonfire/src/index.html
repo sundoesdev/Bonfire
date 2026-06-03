@@ -2,11 +2,42 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/vendor/codemirror/lib/codemirror.min.css" />
+    <link rel="stylesheet" href="/vendor/codemirror/addon/dialog/dialog.min.css" />
     <link rel="stylesheet" href="styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Bonfire</title>
     <!-- Vendored highlight.js browser bundle exposes global `hljs`. -->
     <script src="/vendor/highlight.min.js"></script>
+    <!-- Vendored CodeMirror 5 (global `CodeMirror`): live syntax highlighting + VIM
+         in the study answer editor. Core → modes (xml/js/css before htmlmixed) →
+         addons → vim keymap. -->
+    <script src="/vendor/codemirror/lib/codemirror.min.js"></script>
+    <script src="/vendor/codemirror/mode/xml/xml.min.js"></script>
+    <script src="/vendor/codemirror/mode/javascript/javascript.min.js"></script>
+    <script src="/vendor/codemirror/mode/css/css.min.js"></script>
+    <script src="/vendor/codemirror/mode/htmlmixed/htmlmixed.min.js"></script>
+    <script src="/vendor/codemirror/mode/clike/clike.min.js"></script>
+    <script src="/vendor/codemirror/mode/python/python.min.js"></script>
+    <script src="/vendor/codemirror/mode/rust/rust.min.js"></script>
+    <script src="/vendor/codemirror/mode/go/go.min.js"></script>
+    <script src="/vendor/codemirror/mode/ruby/ruby.min.js"></script>
+    <script src="/vendor/codemirror/mode/php/php.min.js"></script>
+    <script src="/vendor/codemirror/mode/sql/sql.min.js"></script>
+    <script src="/vendor/codemirror/mode/shell/shell.min.js"></script>
+    <script src="/vendor/codemirror/mode/yaml/yaml.min.js"></script>
+    <script src="/vendor/codemirror/mode/markdown/markdown.min.js"></script>
+    <script src="/vendor/codemirror/mode/dockerfile/dockerfile.min.js"></script>
+    <script src="/vendor/codemirror/mode/lua/lua.min.js"></script>
+    <script src="/vendor/codemirror/mode/perl/perl.min.js"></script>
+    <script src="/vendor/codemirror/mode/haskell/haskell.min.js"></script>
+    <script src="/vendor/codemirror/mode/swift/swift.min.js"></script>
+    <script src="/vendor/codemirror/mode/powershell/powershell.min.js"></script>
+    <script src="/vendor/codemirror/mode/toml/toml.min.js"></script>
+    <script src="/vendor/codemirror/mode/r/r.min.js"></script>
+    <script src="/vendor/codemirror/addon/search/searchcursor.min.js"></script>
+    <script src="/vendor/codemirror/addon/dialog/dialog.min.js"></script>
+    <script src="/vendor/codemirror/keymap/vim.min.js"></script>
     <script type="module" src="/main.js"></script>
   </head>
 
@@ -14,6 +45,7 @@
     <div id="app">
       <aside id="sidebar">
         <div class="brand">Bonfire</div>
+        <button id="update-badge" class="update-badge" hidden>● Update available</button>
         <div class="deck-switch">
           <label for="deck-switcher">Deck</label>
           <select id="deck-switcher"></select>
@@ -22,6 +54,7 @@
           <button data-view="dashboard">Dashboard</button>
           <button data-view="library">Library</button>
           <button data-view="study">Study</button>
+          <button data-view="stats">Stats</button>
           <button data-view="tags">Tags</button>
           <button data-view="settings">Settings</button>
         </nav>

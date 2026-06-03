@@ -7,10 +7,12 @@ import { renderLibrary } from "./views/library.js";
 import { renderEditor } from "./views/editor.js";
 import { renderStudy } from "./views/study.js";
 import { renderTags } from "./views/tags.js";
+import { renderStats } from "./views/stats.js";
 import { renderSettings } from "./views/settings.js";
 import { openQuickCapture } from "./components/quickCapture.js";
 import { openCommandPalette } from "./components/commandPalette.js";
 import { loadAppearance } from "./theme.js";
+import { checkForUpdate, applyUpdate } from "./update.js";
 
 const DECK_KEY = "current_deck";
 
@@ -28,6 +30,7 @@ const VIEWS = {
   editor: renderEditor,
   study: renderStudy,
   tags: renderTags,
+  stats: renderStats,
   settings: renderSettings,
 };
 
@@ -154,6 +157,13 @@ window.addEventListener("DOMContentLoaded", async () => {
     b.addEventListener("click", () => navigate(b.dataset.view));
   });
   document.querySelector("#new-shard").addEventListener("click", () => ctx.newShard());
+
+  // Auto-updater (scaffold): no-op until the updater plugin is configured.
+  const updateBadge = document.querySelector("#update-badge");
+  if (updateBadge) {
+    updateBadge.addEventListener("click", () => applyUpdate());
+    checkForUpdate(ctx, updateBadge);
+  }
 
   // Global shortcuts: Ctrl+N quick capture, Ctrl+K library search.
   window.addEventListener("keydown", (e) => {

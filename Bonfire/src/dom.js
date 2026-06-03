@@ -29,6 +29,12 @@ export function famBadge(fam) {
   return `<span class="badge" style="background:${famColor(fam)}">${esc(fam)}</span>`;
 }
 
+// Category chip (e.g. "snippet"). Uses theme vars for a readable, non-black look.
+export function catBadge(cat) {
+  if (!cat) return "";
+  return `<span class="badge cat-badge">${esc(cat)}</span>`;
+}
+
 // Difficulty + foundation badges derived from a card's tags.
 export function metaBadges(tags) {
   const diff = getDifficulty(tags);
