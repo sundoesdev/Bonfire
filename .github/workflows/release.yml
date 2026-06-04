@@ -36,6 +36,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
@@ -47,6 +52,12 @@ jobs:
             patchelf \
             libayatana-appindicator3-dev
 
+      # Installs @tauri-apps/cli so `npm run tauri build` can find the `tauri`
+      # binary (the missing piece behind the exit-127 "command not found").
+      - name: Install frontend dependencies
+        run: npm install
+        working-directory: ./Bonfire
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -57,9 +68,9 @@ jobs:
         with:
           workspaces: "./Bonfire/src-tauri -> target"
 
-      # No JS build step: the frontend is static files in Bonfire/src and the
-      # vendored libs (highlight.js, CodeMirror) are committed, so tauri-action
-      # just runs `tauri build`.
+      # No frontend *build*: the UI is static files in Bonfire/src and the
+      # vendored libs (highlight.js, CodeMirror) are committed. The npm install
+      # above only provides the @tauri-apps/cli, then tauri-action runs `tauri build`.
       - name: Build and publish installers
         uses: tauri-apps/tauri-action@v0
         env:
