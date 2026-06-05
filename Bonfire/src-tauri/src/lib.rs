@@ -93,6 +93,11 @@ fn delete_all_shards(state: State<AppState>) -> Result<usize, String> {
     with_conn(&state, |c| db::delete_all_shards(c))
 }
 
+#[tauri::command]
+fn clear_review_log(state: State<AppState>) -> Result<usize, String> {
+    with_conn(&state, |c| db::clear_review_log(c))
+}
+
 /// Read a settings value, swallowing lock/lookup errors to `None`.
 fn read_setting(state: &State<AppState>, key: &str) -> Option<String> {
     with_conn(state, |c| db::get_setting(c, key)).ok().flatten()
@@ -160,6 +165,7 @@ fn apply_review(
     rating: &str,
     duration_ms: i64,
     session_id: &str,
+    cram: bool,
 ) -> Result<Shard, String> {
     let mut shard = with_conn(state, |c| db::get_shard(c, id))?
         .ok_or_else(|| format!("Shard not found: {}", id))?;
@@ -169,6 +175,16 @@ fn apply_review(
     } else {
         "sm2"
     };
+
+    // Cram mode is pure practice: it must NOT touch the scheduler. Skip all
+    // SM-2/FSRS math and the per-card scheduling/last_reviewed updates, but still
+    // log the review so the heatmap / streak / retention counters reflect it.
+    if cram {
+        with_conn(state, |c| {
+            db::log_review(c, id, &shard.deck_id, rating, "cram", duration_ms, session_id)
+        })?;
+        return Ok(shard);
+    }
 
     if algorithm == "fsrs" {
         let cfg = fsrs_config_from(read_setting(state, "fsrs_params"));
@@ -224,6 +240,7 @@ fn submit_review(
     rating: String,
     duration_ms: Option<i64>,
     session_id: Option<String>,
+    cram: Option<bool>,
 ) -> Result<Shard, String> {
     apply_review(
         &state,
@@ -231,13 +248,8 @@ fn submit_review(
         &rating,
         duration_ms.unwrap_or(0).max(0),
         session_id.as_deref().unwrap_or(""),
+        cram.unwrap_or(false),
     )
-}
-
-#[tauri::command]
-fn mark_reviewed(state: State<AppState>, id: String) -> Result<Shard, String> {
-    // "Good" rating, matching the original's direct mark-reviewed action.
-    apply_review(&state, &id, "good", 0, "")
 }
 
 /// Per-day review counts for the study heatmap / streak analytics.
@@ -328,11 +340,11 @@ pub fn run() {
             save_shard,
             delete_shard,
             delete_all_shards,
+            clear_review_log,
             list_decks,
             save_deck,
             delete_deck,
             submit_review,
-            mark_reviewed,
             review_history,
             study_days,
             rename_tag,

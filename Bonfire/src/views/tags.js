@@ -33,7 +33,7 @@ export function renderTags(container, ctx) {
         <span class="title">#${esc(t)}</span>
         ${special ? '<span class="muted" title="Special keyword tag (difficulty / foundation / reveal-only)">special</span>' : ""}
         <span class="cat">${n} card${n === 1 ? "" : "s"}</span>
-        <button class="btn mini tag-rename">Rename / merge</button>
+        <button class="btn btn-accent mini tag-rename">Rename / merge</button>
         <button class="btn mini btn-danger tag-del">Delete</button>
       </div>
     `);

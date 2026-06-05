@@ -8,12 +8,12 @@ export const listShards = () => invoke("list_shards");
 export const saveShard = (shard) => invoke("save_shard", { shard });
 export const deleteShard = (id) => invoke("delete_shard", { id });
 export const deleteAllShards = () => invoke("delete_all_shards");
+export const clearReviewLog = () => invoke("clear_review_log");
 export const listDecks = () => invoke("list_decks");
 export const saveDeck = (deck) => invoke("save_deck", { deck });
 export const deleteDeck = (id) => invoke("delete_deck", { id });
-export const submitReview = (id, rating, durationMs, sessionId) =>
-  invoke("submit_review", { id, rating, durationMs, sessionId });
-export const markReviewed = (id) => invoke("mark_reviewed", { id });
+export const submitReview = (id, rating, durationMs, sessionId, cram = false) =>
+  invoke("submit_review", { id, rating, durationMs, sessionId, cram });
 export const reviewHistory = () => invoke("review_history");
 export const studyDays = () => invoke("study_days");
 export const renameTag = (oldName, newName) => invoke("rename_tag", { old: oldName, new: newName });

@@ -257,6 +257,14 @@ pub fn delete_all_shards(conn: &Connection) -> Result<usize> {
     Ok(n)
 }
 
+/// Delete every review-log entry (wipes heatmap / streak / activity stats).
+/// Per-card scheduling fields are untouched, so the retention forecast survives.
+/// Returns the number removed.
+pub fn clear_review_log(conn: &Connection) -> Result<usize> {
+    let n = conn.execute("DELETE FROM review_log", [])?;
+    Ok(n)
+}
+
 fn row_to_deck(row: &rusqlite::Row) -> Result<Deck> {
     Ok(Deck {
         id: row.get("id")?,

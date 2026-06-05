@@ -4,13 +4,13 @@ export async function exportVault(ctx) {
   const path = await ctx.api.saveDialog("bonfire-export.json");
   if (!path) return;
   await ctx.api.exportToJson(path);
-  alert("Exported to " + path);
+  ctx.toast("Vault exported");
 }
 
 export async function importVault(ctx) {
   const path = await ctx.api.openDialog();
   if (!path) return 0;
   const n = await ctx.api.importFromJson(path);
-  alert(`Imported ${n} shard(s).`);
+  ctx.toast(`Imported ${n} card${n === 1 ? "" : "s"}`);
   return n;
 }

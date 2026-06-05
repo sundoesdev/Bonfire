@@ -34,13 +34,18 @@ const presetOptionsHtml = (current) =>
 
 export async function renderSettings(container, ctx) {
   const cfg = await loadConfig(ctx);
-  const form = buildStudyConfigForm(ctx, cfg, { showDailyCaps: true });
+  const form = buildStudyConfigForm(ctx, cfg, {
+    showDailyCaps: true,
+    showFilters: true,
+    showPreviewToggle: true,
+  });
 
   // Spaced-repetition settings.
   const algorithm = (await ctx.api.getSetting("sr_algorithm")) || DEFAULT_ALGORITHM;
   const sm2p = await loadJsonSetting(ctx, "sm2_params", SM2_DEFAULTS);
   const fsrsp = await loadJsonSetting(ctx, "fsrs_params", FSRS_DEFAULTS);
   const vimOn = (await ctx.api.getSetting("editor_vim")) === "true";
+  const dailyDeck = (await ctx.api.getSetting("daily_deck")) || "";
 
   const sel = (id, items, current) =>
     `<select id="${id}">${items
@@ -58,7 +63,7 @@ export async function renderSettings(container, ctx) {
           <label>UI font</label>${sel("set-font", FONTS, appearance.font)}
           <label>UI scale</label>${sel("set-scale", SCALES, appearance.scale)}
         </div>
-        <div class="muted">Changes apply instantly and are remembered.</div>
+        <div class="muted" style="margin-top:8px"><b>Theme</b> sets the colour palette (used across the whole app, including syntax highlighting and button colours). <b>UI font</b> changes the interface typeface. <b>UI scale</b> zooms the entire interface up or down. Changes apply instantly and are remembered.</div>
       </div>
 
       <div class="section-title">Editor</div>
@@ -69,7 +74,7 @@ export async function renderSettings(container, ctx) {
 
       <div class="section-title">Decks</div>
       <div class="panel">
-        <div class="muted" style="margin-bottom:8px">A deck's preset controls its fields — the <b>Code</b> preset shows the Language field and syntax highlighting; other presets hide them so you can study any subject. Cards in a deleted deck move to the default deck.</div>
+        <div class="muted" style="margin-bottom:8px">A deck's preset controls its fields — the <b>Code</b> preset shows the Language field and syntax highlighting; other presets hide them so you can study any subject. Cards in a deleted deck move to the default deck. Star one deck as your <b>daily default</b> — the Ctrl+D quick-start studies it.</div>
         <div id="deck-list"></div>
         <hr style="border:none;border-top:1px solid var(--border);margin:12px 0" />
         <div class="row">
@@ -110,19 +115,23 @@ export async function renderSettings(container, ctx) {
 
       <div class="section-title">Study session defaults</div>
       <div class="panel" style="margin-bottom:8px;display:flex;flex-direction:column;gap:8px">
-        <div class="muted">Saves the session limits and filters set below as your defaults. The daily quick-start (Ctrl+D) then launches a study session using these settings, without asking you to configure it each time.</div>
+        <div class="muted">Saves the session limits and filters set below as your defaults. The daily quick-start (Ctrl+D) then launches straight into a session using these settings — studying your daily-default deck (set above) — without asking you to configure it each time. The Study screen shows a trimmed version of these controls; the full set (daily caps, language &amp; tag filters, queue preview) lives here.</div>
         <div><button class="btn btn-primary" id="save-study">Save study defaults</button></div>
       </div>
       <div id="study-slot"></div>
 
       <div class="section-title" style="margin-top:6px">Data</div>
       <div class="panel">
+        <div class="muted" style="margin-bottom:8px"><b>Export</b> writes every card, deck, and your full review history to a single JSON file (your backup — attachments are embedded, so the file can get large). <b>Import</b> loads cards and decks from such a file; review history is only restored into an empty log, so re-importing won't double-count your stats.</div>
         <div class="vlist">
           <button class="btn btn-tool" id="export">Export all to JSON</button>
           <button class="btn btn-tool" id="import">Import from JSON</button>
         </div>
         <hr style="border:none;border-top:1px solid var(--border);margin:14px 0" />
-        <div class="muted-2" style="margin-bottom:8px">Danger zone</div>
+        <div class="muted-2" style="margin-bottom:8px">Danger zone — these cannot be undone.</div>
+        <div class="muted" style="margin-bottom:6px">Wipe all stats clears your heatmap, streaks, and activity totals. Card scheduling and the projected-retention chart are unaffected.</div>
+        <button class="btn btn-danger" id="wipe-stats" style="margin-bottom:12px">Wipe all stats…</button>
+        <div class="muted" style="margin-bottom:6px">Delete all cards permanently removes every card (across all decks).</div>
         <button class="btn btn-danger" id="delete-all">Delete all cards…</button>
       </div>
     </div>
@@ -130,7 +139,7 @@ export async function renderSettings(container, ctx) {
 
   root.querySelector("#study-slot").appendChild(form.node);
 
-  renderDecks(root, ctx);
+  renderDecks(root, ctx, dailyDeck);
   root.querySelector("#add-deck").addEventListener("click", async () => {
     const nameEl = root.querySelector("#new-deck-name");
     const name = nameEl.value.trim();
@@ -139,6 +148,7 @@ export async function renderSettings(container, ctx) {
       return;
     }
     await ctx.api.saveDeck({ name, preset: root.querySelector("#new-deck-preset").value });
+    ctx.toast("Deck added");
     ctx.navigate("settings");
   });
 
@@ -146,13 +156,14 @@ export async function renderSettings(container, ctx) {
   root.querySelector("#set-theme").addEventListener("change", (e) => setAppearance("theme", e.target.value));
   root.querySelector("#set-font").addEventListener("change", (e) => setAppearance("font", e.target.value));
   root.querySelector("#set-scale").addEventListener("change", (e) => setAppearance("scale", e.target.value));
-  root
-    .querySelector("#set-vim")
-    .addEventListener("change", (e) => ctx.api.setSetting("editor_vim", e.target.checked ? "true" : "false"));
+  root.querySelector("#set-vim").addEventListener("change", (e) => {
+    ctx.api.setSetting("editor_vim", e.target.checked ? "true" : "false");
+    ctx.toast("Editor setting saved");
+  });
 
   root.querySelector("#save-study").addEventListener("click", async () => {
     await saveConfig(ctx, form.collect());
-    alert("Study defaults saved.");
+    ctx.toast("Study defaults saved");
   });
 
   // ---- Spaced-repetition settings ----
@@ -194,13 +205,14 @@ export async function renderSettings(container, ctx) {
       "fsrs_params",
       JSON.stringify({ requestRetention: num("#fsrs-retention", FSRS_DEFAULTS.requestRetention), weights })
     );
-    alert("Spaced-repetition settings saved.");
+    ctx.toast("Spaced-repetition settings saved");
   });
   root.querySelector("#reset-sr").addEventListener("click", async () => {
     if (!confirm("Reset spaced-repetition settings to defaults?")) return;
     await ctx.api.setSetting("sr_algorithm", DEFAULT_ALGORITHM);
     await ctx.api.setSetting("sm2_params", JSON.stringify(SM2_DEFAULTS));
     await ctx.api.setSetting("fsrs_params", JSON.stringify(FSRS_DEFAULTS));
+    ctx.toast("Settings reset to defaults");
     ctx.navigate("settings");
   });
 
@@ -216,39 +228,56 @@ export async function renderSettings(container, ctx) {
     ctx.navigate("settings");
   });
 
+  root.querySelector("#wipe-stats").addEventListener("click", () => confirmWipeStats(ctx));
   root.querySelector("#delete-all").addEventListener("click", () => confirmDeleteAll(ctx));
 
   container.innerHTML = "";
   container.appendChild(root);
 }
 
-// Render the editable list of decks (rename, change preset, delete).
-function renderDecks(root, ctx) {
+// Render the editable list of decks (rename, change preset, delete, set daily).
+function renderDecks(root, ctx, dailyDeck = "") {
   const list = root.querySelector("#deck-list");
   const decks = ctx.decks();
   list.innerHTML = "";
 
   decks.forEach((d) => {
     const isDefault = d.id === DEFAULT_DECK_ID;
+    const isDaily = d.id === dailyDeck;
     const count = ctx.state.allShards.filter((s) => s.deckId === d.id).length;
     const row = el(`
       <div class="list-row">
         <span class="title">${esc(d.name) || "(unnamed)"}</span>
         <span class="cat">${count} card${count === 1 ? "" : "s"}</span>
+        ${
+          isDaily
+            ? '<span class="badge daily-badge" title="Ctrl+D quick-start studies this deck">★ daily</span>'
+            : '<button class="btn btn-secondary mini deck-daily" title="Make this the Ctrl+D quick-start deck">Set daily</button>'
+        }
         <select class="deck-preset">${presetOptionsHtml(d.preset)}</select>
-        <button class="btn mini deck-rename">Rename</button>
-        ${isDefault ? '<span class="muted">default</span>' : '<button class="btn mini btn-danger deck-del">Delete</button>'}
+        <button class="btn btn-accent mini deck-rename">Rename</button>
+        ${isDefault ? '<span class="muted">default</span>' : '<button class="btn btn-danger mini deck-del">Delete</button>'}
       </div>
     `);
 
     row.querySelector(".deck-preset").addEventListener("change", async (e) => {
       await ctx.api.saveDeck({ ...d, preset: e.target.value });
+      ctx.toast("Deck updated");
       ctx.navigate("settings");
     });
+    const dailyBtn = row.querySelector(".deck-daily");
+    if (dailyBtn) {
+      dailyBtn.addEventListener("click", async () => {
+        await ctx.api.setSetting("daily_deck", d.id);
+        ctx.toast("Daily deck set");
+        ctx.navigate("settings");
+      });
+    }
     row.querySelector(".deck-rename").addEventListener("click", async () => {
       const name = prompt("Rename deck:", d.name);
       if (name && name.trim() && name.trim() !== d.name) {
         await ctx.api.saveDeck({ ...d, name: name.trim() });
+        ctx.toast("Deck renamed");
         ctx.navigate("settings");
       }
     });
@@ -260,6 +289,7 @@ function renderDecks(root, ctx) {
           : `Delete "${d.name}"?`;
         if (confirm(msg)) {
           await ctx.api.deleteDeck(d.id);
+          ctx.toast("Deck deleted");
           ctx.navigate("settings");
         }
       });
@@ -283,7 +313,7 @@ async function renderTemplates(root, ctx) {
         ${
           builtin
             ? '<span class="muted">built-in</span>'
-            : '<button class="btn mini template-edit">Edit</button><button class="btn mini btn-danger template-del">Delete</button>'
+            : '<button class="btn btn-accent mini template-edit">Edit</button><button class="btn btn-danger mini template-del">Delete</button>'
         }
       </div>
     `);
@@ -294,6 +324,7 @@ async function renderTemplates(root, ctx) {
         if (!confirm(`Delete template "${t.name}"?`)) return;
         const remaining = (await loadTemplates(ctx)).filter((x) => x.id !== t.id);
         await saveTemplates(ctx, remaining);
+        ctx.toast("Template deleted");
         renderTemplates(root, ctx);
       });
     }
@@ -358,6 +389,7 @@ function templateModal(ctx, existing, onDone) {
     const custom = all.filter((x) => !isBuiltin(x) && x.id !== updated.id);
     custom.push(updated);
     await saveTemplates(ctx, custom);
+    ctx.toast("Template saved");
     close();
     if (onDone) onDone();
   });
@@ -365,6 +397,47 @@ function templateModal(ctx, existing, onDone) {
   root.appendChild(backdrop);
   document.addEventListener("keydown", onKey);
   backdrop.querySelector("#t-name").focus();
+}
+
+// Single-confirm gate for wiping the study stats (review_log). Lighter than the
+// delete-all card gate — stats are recoverable by studying again, cards aren't.
+function confirmWipeStats(ctx) {
+  const root = document.querySelector("#modal-root");
+  if (root.querySelector(".modal-backdrop")) return;
+
+  const backdrop = el(`
+    <div class="modal-backdrop">
+      <div class="modal">
+        <h2>Wipe all stats?</h2>
+        <div class="desc" style="margin-bottom:12px">This clears your <b>heatmap</b>, <b>streaks</b>, and <b>activity totals</b> (your entire review history). Your cards and their scheduling, plus the projected-retention chart, are <b>not</b> affected. This cannot be undone.</div>
+        <div class="actions">
+          <button class="btn btn-secondary" id="wipe-cancel">Cancel</button>
+          <button class="btn btn-danger" id="wipe-confirm">Wipe stats</button>
+        </div>
+      </div>
+    </div>
+  `);
+
+  function close() {
+    root.innerHTML = "";
+    document.removeEventListener("keydown", onKey);
+  }
+  function onKey(e) {
+    if (e.key === "Escape") close();
+  }
+  async function doWipe() {
+    await ctx.api.clearReviewLog();
+    close();
+    ctx.toast("Study stats wiped");
+  }
+  backdrop.querySelector("#wipe-confirm").addEventListener("click", doWipe);
+  backdrop.querySelector("#wipe-cancel").addEventListener("click", close);
+  backdrop.addEventListener("mousedown", (e) => {
+    if (e.target === backdrop) close();
+  });
+
+  root.appendChild(backdrop);
+  document.addEventListener("keydown", onKey);
 }
 
 // Typed-phrase confirmation gate for deleting every card.
@@ -403,7 +476,7 @@ function confirmDeleteAll(ctx) {
     if (!matches()) return;
     const n = await ctx.api.deleteAllShards();
     close();
-    alert(`Deleted ${n} card(s).`);
+    ctx.toast(`Deleted ${n} card${n === 1 ? "" : "s"}`);
     ctx.navigate("dashboard");
   }
 

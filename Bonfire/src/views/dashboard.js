@@ -93,7 +93,7 @@ export function renderDashboard(container, ctx) {
     const row = el(`
       <div class="forecast-row">
         <span class="forecast-label">${esc(d.label)}</span>
-        <span class="forecast-bar-track"><span class="forecast-bar" style="width:${(d.count / max) * 100}%"></span></span>
+        <span class="forecast-bar-track"><span class="forecast-bar" data-level="${dueLevel(d.count)}" style="width:${(d.count / max) * 100}%"></span></span>
         <span class="forecast-count">${d.count}</span>
       </div>
     `);
@@ -125,6 +125,16 @@ function ymd(d) {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${d.getFullYear()}-${m}-${day}`;
+}
+
+// Intensity bucket for a day's due count, mirroring the Stats heatmap's 0–4
+// scale so a busier day reads as a brighter forecast bar.
+function dueLevel(c) {
+  if (!c) return 0;
+  if (c <= 2) return 1;
+  if (c <= 5) return 2;
+  if (c <= 9) return 3;
+  return 4;
 }
 
 // Count review-enabled cards due on each of the next 7 days. Day 0 ("Today")

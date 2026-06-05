@@ -4,12 +4,13 @@ import * as api from "./api.js";
 import { DEFAULT_LANGUAGES, DEFAULT_DECK_ID, presetConfig } from "./constants.js";
 import { renderDashboard } from "./views/dashboard.js";
 import { renderLibrary } from "./views/library.js";
-import { renderEditor } from "./views/editor.js";
 import { renderStudy } from "./views/study.js";
 import { renderTags } from "./views/tags.js";
 import { renderStats } from "./views/stats.js";
 import { renderSettings } from "./views/settings.js";
 import { openQuickCapture } from "./components/quickCapture.js";
+import { openCardModal } from "./components/cardModal.js";
+import { showToast } from "./components/toast.js";
 import { openCommandPalette } from "./components/commandPalette.js";
 import { loadAppearance } from "./theme.js";
 import { checkForUpdate, applyUpdate } from "./update.js";
@@ -27,7 +28,6 @@ const state = {
 const VIEWS = {
   dashboard: renderDashboard,
   library: renderLibrary,
-  editor: renderEditor,
   study: renderStudy,
   tags: renderTags,
   stats: renderStats,
@@ -122,19 +122,34 @@ const ctx = {
   state,
   languages,
   navigate,
+  refreshView: () => navigate(currentView()),
   decks: () => state.decks,
   currentDeck,
   currentPreset,
   currentDeckId: () => state.currentDeckId,
   setDeck,
-  openShard: (id) => navigate("editor", { id }),
-  newShard: () => navigate("editor", { id: null }),
+  openShard: (id) => openCardModal(ctx, { id }),
+  newShard: () => openQuickCapture(ctx),
   startStudy: () => navigate("study"),
-  quickStudy: () => navigate("study", { quick: true }),
+  // Daily quick-start (Ctrl+D) studies the deck marked as the daily default in
+  // Settings → Decks, if one is set; otherwise it uses the current deck.
+  quickStudy: async () => {
+    try {
+      const daily = await api.getSetting("daily_deck");
+      if (daily && state.decks.some((d) => d.id === daily)) {
+        state.currentDeckId = daily;
+        await api.setSetting(DECK_KEY, daily);
+      }
+    } catch (_e) {
+      /* fall back to the current deck */
+    }
+    navigate("study", { quick: true });
+  },
   weakStudy: () => navigate("study", { weak: true }),
   reviewCard: (id) => navigate("study", { single: id }),
   openQuickCapture: () => openQuickCapture(ctx),
   openCommandPalette: () => openCommandPalette(ctx),
+  toast: (msg, type) => showToast(msg, type),
 };
 
 window.addEventListener("DOMContentLoaded", async () => {

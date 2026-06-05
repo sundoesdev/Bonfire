@@ -191,9 +191,12 @@ function buildWeakQueue(shards, cfg) {
 // ---------- Shared config form (used by setup screen + Settings) ----------
 // Returns { node, collect } where collect() reads the current values into a config object.
 export function buildStudyConfigForm(ctx, cfg, opts = {}) {
-  // Daily new/review caps only show in Settings (item 5); the Study setup screen
-  // asks only for max time + max cards.
+  // The Study setup screen stays lean: only Deck/Max time/Max cards/Cram/Difficulty.
+  // Daily caps, the Languages & Include-tags filters, and the preview toggle live in
+  // Settings so the high-traffic screen isn't an option dump. Each is opt-in here.
   const showCaps = !!opts.showDailyCaps;
+  const showFilters = !!opts.showFilters; // Languages + Include-tags panels
+  const showPreviewToggle = !!opts.showPreviewToggle;
   const langs = ctx.languages();
   const allTags = [...new Set(ctx.state.shards.flatMap((s) => s.tags || []))].sort();
 
@@ -237,25 +240,49 @@ export function buildStudyConfigForm(ctx, cfg, opts = {}) {
             ? "Daily caps count new cards and reviews across all of today's sessions; Cram mode ignores them."
             : "Max time is the budget for the session — the timer keeps counting into the negative until you end it. Daily new/review caps live in Settings."
         }</div>
-        <label class="chk"><input type="checkbox" id="c-cram" ${cfg.cram ? "checked" : ""}/> Cram mode (ignore due dates — practice the whole set)</label>
-        <br/>
-        <label class="chk"><input type="checkbox" id="c-preview" ${cfg.showPreview ? "checked" : ""}/> Show editable queue preview before starting (quick-start)</label>
+        <div style="margin-bottom:8px">
+          <button type="button" class="btn btn-toggle ${cfg.cram ? "on" : ""}" id="c-cram">Cram mode</button>
+          <div class="muted" style="margin-top:6px">Practice the whole set, ignoring due dates. Cram never changes a card's schedule, but still counts toward your heatmap and streak.</div>
+        </div>
+        ${
+          showPreviewToggle
+            ? `<div>
+          <button type="button" class="btn btn-toggle ${cfg.showPreview ? "on" : ""}" id="c-preview">Queue preview</button>
+          <div class="muted" style="margin-top:6px">Show the editable queue preview before a session starts. When off, quick-start (Ctrl+D) and "Build queue" drop you straight into studying.</div>
+        </div>`
+            : ""
+        }
       </div>
-      <div class="panel">
+      ${
+        showFilters
+          ? `<div class="panel">
         <div class="section-title">Languages <span class="muted">(none checked = all)</span></div>
+        <div class="muted" style="margin-bottom:8px">Restrict sessions to specific languages. Leave everything unchecked to include all languages.</div>
         <div class="chk-grid">${checkList(langs, cfg.languages, "lang")}</div>
-      </div>
+      </div>`
+          : ""
+      }
       <div class="panel">
         <div class="section-title">Difficulty <span class="muted">(none checked = all)</span></div>
         <div class="chk-grid">${checkList(DIFFICULTIES, cfg.difficulties, "diff")}</div>
-        <label class="chk" style="margin-top:8px"><input type="checkbox" id="c-foundation" ${cfg.foundationOnly ? "checked" : ""}/> Foundational cards only</label>
+        <label class="chk" style="margin-top:8px"><input type="checkbox" id="c-foundation" ${cfg.foundationOnly ? "checked" : ""}/> Foundational cards only (cards tagged <code>foundation</code>)</label>
       </div>
-      <div class="panel">
+      ${
+        showFilters
+          ? `<div class="panel">
         <div class="section-title">Include tags <span class="muted">(card must have all)</span></div>
+        <div class="muted" style="margin-bottom:8px">Only study cards carrying every checked tag. Leave unchecked to ignore tag filtering.</div>
         <div class="chk-grid">${allTags.length ? checkList(allTags, cfg.includeTags, "inc") : '<span class="muted">No tags yet</span>'}</div>
-      </div>
+      </div>`
+          : ""
+      }
     </div>
   `);
+
+  // Toggle buttons (Cram, Queue preview) flip their own .on class.
+  node.querySelectorAll(".btn-toggle").forEach((b) =>
+    b.addEventListener("click", () => b.classList.toggle("on"))
+  );
 
   const readGroup = (name) =>
     [...node.querySelectorAll(`input[data-group="${name}"]:checked`)].map((c) => c.value);
@@ -264,16 +291,16 @@ export function buildStudyConfigForm(ctx, cfg, opts = {}) {
     ...cfg,
     timeLimitMinutes: parseInt(node.querySelector("#c-time").value, 10) || 0,
     maxCards: parseInt(node.querySelector("#c-max").value, 10) || 0,
-    cram: node.querySelector("#c-cram").checked,
-    showPreview: node.querySelector("#c-preview").checked,
+    cram: node.querySelector("#c-cram").classList.contains("on"),
+    showPreview: showPreviewToggle ? node.querySelector("#c-preview").classList.contains("on") : cfg.showPreview,
     limitNew: showCaps ? node.querySelector("#c-limitnew").checked : cfg.limitNew,
     newPerDay: showCaps ? parseInt(node.querySelector("#c-newper").value, 10) || 0 : cfg.newPerDay,
     limitReviews: showCaps ? node.querySelector("#c-limitrev").checked : cfg.limitReviews,
     reviewsPerDay: showCaps ? parseInt(node.querySelector("#c-revper").value, 10) || 0 : cfg.reviewsPerDay,
     foundationOnly: node.querySelector("#c-foundation").checked,
-    languages: readGroup("lang"),
+    languages: showFilters ? readGroup("lang") : cfg.languages,
     difficulties: readGroup("diff"),
-    includeTags: readGroup("inc"),
+    includeTags: showFilters ? readGroup("inc") : cfg.includeTags,
   });
 
   return { node, collect };
@@ -296,7 +323,10 @@ export async function renderStudy(container, ctx, params = {}) {
     }
     runSession(container, ctx, cfg, [shard], {
       noTimer: true,
-      onDone: () => ctx.navigate("editor", { id: shard.id }),
+      onDone: async () => {
+        await ctx.navigate("dashboard");
+        ctx.openShard(shard.id);
+      },
     });
     return;
   }
@@ -348,8 +378,7 @@ function renderSetup(container, ctx, cfg, notice) {
         <h2 style="margin:0;font-size:16px">Study</h2>
         <span class="muted" id="algo-note" style="margin-left:10px"></span>
         <div class="spacer"></div>
-        <button class="btn btn-tool" id="save-default">Save as daily default</button>
-        <button class="btn btn-tool" id="weak">Drill weak spots</button>
+        <button class="btn btn-primary" id="weak">Drill weak spots</button>
         <button class="btn btn-primary" id="build">Build queue →</button>
       </div>
       ${notice ? `<div class="panel" style="border-color:#5a4a1f;color:#f5c451">${esc(notice)}</div>` : ""}
@@ -380,11 +409,6 @@ function renderSetup(container, ctx, cfg, notice) {
       if (note) note.textContent = `Scheduling: ${(a || "sm2").toUpperCase()}`;
     })
     .catch(() => {});
-
-  root.querySelector("#save-default").addEventListener("click", async () => {
-    await saveConfig(ctx, form.collect());
-    alert("Saved as your daily study default.");
-  });
 
   root.querySelector("#weak").addEventListener("click", () => {
     const next = form.collect();
@@ -559,7 +583,7 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       const wasNew = isNewCard(s);
       const durationMs = Math.max(0, Date.now() - (session.cardShownMs || Date.now()));
       try {
-        await ctx.api.submitReview(s.id, rating, durationMs, session.sessionId);
+        await ctx.api.submitReview(s.id, rating, durationMs, session.sessionId, !!cfg.cram);
       } catch (_e) {
         /* keep going even if persistence fails */
       }
