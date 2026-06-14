@@ -571,30 +571,55 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       container.appendChild(summary());
       return;
     }
-    const root = card(session.queue[session.index]);
+    // Clear and let card() attach the new card to the live DOM *before* it wires
+    // up the answer editor / controls — the wiring uses querySelector + CodeMirror,
+    // which misbehave on a still-detached <template> fragment (WebKitGTK).
     session.cardShownMs = Date.now();
     container.innerHTML = "";
-    container.appendChild(root);
+    let root;
+    try {
+      root = card(session.queue[session.index]);
+    } catch (e) {
+      // A single malformed card must not brick the whole session — skip it.
+      try {
+        ctx.toast(`Skipped a card that failed to render: ${e?.message || e}`, "error");
+      } catch (_e) {
+        /* ignore toast failures */
+      }
+      session.index++;
+      render();
+      return;
+    }
     startTimer(root);
   }
 
   function gradeAndAdvance(s, rating) {
-    return async () => {
+    // One grade per card render: ignore repeat/rapid clicks on the same buttons.
+    let used = false;
+    return () => {
+      if (used) return;
+      used = true;
       const wasNew = isNewCard(s);
       const durationMs = Math.max(0, Date.now() - (session.cardShownMs || Date.now()));
-      try {
-        await ctx.api.submitReview(s.id, rating, durationMs, session.sessionId, !!cfg.cram);
-      } catch (_e) {
-        /* keep going even if persistence fails */
-      }
-      // Count toward today's per-day caps (skip in cram, which ignores them).
-      if (!cfg.cram) {
+
+      // Persist in the background. The UI advance below must NOT be gated on this:
+      // a slow / hung / failed submitReview must never freeze the rating buttons.
+      (async () => {
         try {
-          await bumpProgress(ctx, wasNew);
+          await ctx.api.submitReview(s.id, rating, durationMs, session.sessionId, !!cfg.cram);
         } catch (_e) {
-          /* ignore */
+          /* keep going even if persistence fails */
         }
-      }
+        // Count toward today's per-day caps (skip in cram, which ignores them).
+        if (!cfg.cram) {
+          try {
+            await bumpProgress(ctx, wasNew);
+          } catch (_e) {
+            /* ignore */
+          }
+        }
+      })();
+
       session.stats.reviewed++;
       if (rating === "forgot") session.stats.forgot++;
       else session.stats.advanced++;
@@ -643,6 +668,11 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       </div>
     `);
 
+    // Attach to the live DOM before wiring. The answer editor (CodeMirror) and the
+    // querySelector lookups below need the card in a real document — on a detached
+    // <template> fragment they fail (e.g. #submit comes back null on WebKitGTK).
+    container.appendChild(root);
+
     const answerArea = root.querySelector("#answer-area");
     const controls = root.querySelector("#controls");
 
@@ -657,7 +687,20 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
     // Question-side attachments (shown before answering), any card type.
     questionExtra.insertAdjacentHTML("beforeend", mediaHtml(s.media, "question"));
 
+    // CodeMirror answer editor (code decks). Hoisted so showReveal can tear it
+    // down before wiping #answer-area — otherwise each card leaks an instance
+    // (with its global resize/blur listeners) referencing detached DOM.
+    let cm = null;
+
     function showReveal(typed) {
+      if (cm) {
+        try {
+          cm.toTextArea();
+        } catch (_e) {
+          /* ignore disposal errors */
+        }
+        cm = null;
+      }
       // The "correct answer" pane varies by card type.
       let answerPaneHtml;
       if (isCloze) {
@@ -726,7 +769,6 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
         <textarea class="code-editor" id="type-answer" spellcheck="false" placeholder="${esc(ph)}"></textarea>`;
       controls.innerHTML = '<button class="btn btn-primary full-width" id="submit">Submit ▶</button>';
       const ta = answerArea.querySelector("#type-answer");
-      let cm = null;
       const getValue = () => (cm ? cm.getValue() : ta.value);
       const submit = () => showReveal(getValue());
       if (useCM) {

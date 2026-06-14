@@ -1,0 +1,17 @@
+# Testing Notes
+
+### This is a cullimination of future roadmap ideas after a week of testing:
+
+1. When looking at all cards in the library section or the dashboard section, I want there to be a checkbox on the far left of the interface. This way, the user can select multiple cards at once. The user can then mass delete cards, edit cards, re-tag cards, add to a new deck, add to an existing deck, remove those cards from a deck, etc. 
+
+2. Cards that have no tags or no deck should be scanned for on app startup and then displayed in settings, if all cards belong in a deck or have atleast a tag, then a description saying so will exist in this space. A mandatory tag that all cards must have is their difficulty (for example, beginner). A card can never not have a difficulty, and in the add shard section, it must be a required drop down. 
+
+3. In add new shard (and editing an exisitng shard), can you move the "Answer (Code)" section? Create two distinct sections where it's just Title and then below is Answer, the other distinct section will have everything else as is. This way, the user can very quickly type a title, tab, type an answer, CTRL + ENTER and it's in the system. 
+
+4. In the settings, the descriptions are not consistent in placement (being above the item being described, or below it). The consensus: all descriptions must be ABOVE the thing being described. Please make this change everywhere in the settings UI. Also, similar to how the CRAM and Queue Preview are toggleable buttons that turn green / off, please make this change also to the VIM Enable mode checkbox --> now a toggle button 
+
+5. What happens to cards that I don't review? either I skip a day, or choose only to do 5 cards when I really should have studied 40? Create a view in the stats window that targets "Card Debt", which describes cards that were not reviewed when they should have been, I also want to create another default deck (that cannot be deleted, the original default deck should not be able to be deleted too). All cards that are in debt should be automatically added to the Card Debt deck, and removed once they no longer have debt. Q&A for any questions you may have about this feature.
+
+6. When inside of a study session, the user should be blocked from making any other action that isn't related to studying. So for example, if they try to click dashboard, a pop up will say "Are you sure you want to end your study session? Unstudied cards will go unaffected." If they hit yes, it ends, gives them the end screen going over the cards they reviewed, and then they can do whatever from there. Or they can hit cancel or X out of the popup, and just continue studying. Do not pause the timer when this happens 
+
+7. I made a realization about the timer mechanic when studying. It should be MAX cards to study in a session (no timer), OR just a timer (study infinite cards until you run out of time), exclusively. So to summarize, have the timer removed functionality removed from studying on just card count, or, the user can study purely based on time, just present an infinite number of cards there after (I say "infinite", but what I really mean is, all cards pending for review, do not leak into cards not pending for review, unless CRAM mode is on. You can ask the user at the end of a timed non-cram session if they would like to activate CRAM mode now to continue until time runs out, they can hit no and it will just continue to the end screen, or yes, and it will keep going until they truly run out of time).
