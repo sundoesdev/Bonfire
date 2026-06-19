@@ -32,6 +32,7 @@ export function blankShard() {
     code: "",
     description: "",
     deckId: "",
+    deckIds: [],
     cardType: "basic",
     tags: [],
     category: "snippet",
@@ -88,9 +89,9 @@ export function buildCardFields(ctx, shard) {
   const famOpts = FAMILIARITIES.map(
     (f) => `<option value="${f}" ${f === shard.familiarity ? "selected" : ""}>${f}</option>`
   ).join("");
-  const diffOpts = [`<option value="">(none)</option>`]
-    .concat(DIFFICULTIES.map((d) => `<option value="${d}">${d}</option>`))
-    .join("");
+  // Difficulty is mandatory (item 2) — no "(none)" option; blank cards default to
+  // the first level (beginner) below.
+  const diffOpts = DIFFICULTIES.map((d) => `<option value="${d}">${d}</option>`).join("");
 
   // The Language row only exists for code presets (the deck preset gates it).
   const languageField = preset.showLanguage
@@ -103,11 +104,20 @@ export function buildCardFields(ctx, shard) {
         <select id="cf-template" title="Prefill every field from a saved template"><option value="">Start from a template…</option></select>
         <span class="muted">(optional)</span>
       </div>
+
+      <!-- Section A: the fast-fill core — Title → Prompt → Answer. -->
       <div class="form-grid">
         <label>Title *</label>
         <input type="text" id="cf-title" placeholder="Short label or the question, e.g. 'Hello world in C'" value="${esc(shard.title)}" />
         <label>Prompt</label>
         <textarea id="cf-prompt" style="min-height:48px" placeholder="Optional: the full task shown during testing">${esc(shard.prompt)}</textarea>
+      </div>
+      <div class="section-title">${esc(preset.answerLabel)} *</div>
+      <div class="muted" id="cf-cardtype-hint" style="margin-bottom:6px;display:none">For cloze cards, wrap the words to hide in <code>{{c1::double braces}}</code>. They'll be blanked out during study.</div>
+      <textarea class="code-editor" id="cf-code" spellcheck="false" placeholder="${esc(preset.answerPlaceholder)}">${esc(shard.code)}</textarea>
+
+      <!-- Section B: classification & metadata. -->
+      <div class="form-grid" style="margin-top:14px">
         ${languageField}
         <label>Card type</label>
         <select id="cf-cardtype">${cardTypeOptions(shard.cardType)}</select>
@@ -115,7 +125,7 @@ export function buildCardFields(ctx, shard) {
         <select id="cf-cat">${catOpts}</select>
         <label>Familiarity</label>
         <select id="cf-fam">${famOpts}</select>
-        <label>Difficulty</label>
+        <label>Difficulty *</label>
         <select id="cf-diff">${diffOpts}</select>
         <label>Flags</label>
         <div class="vlist">
@@ -127,9 +137,6 @@ export function buildCardFields(ctx, shard) {
         <label>Tags</label>
         <input type="text" id="cf-tags" placeholder="Comma-separated: networking, advanced, foundation" value="${esc(renderTags(shard.tags || []))}" />
       </div>
-      <div class="section-title">${esc(preset.answerLabel)} *</div>
-      <div class="muted" id="cf-cardtype-hint" style="margin-bottom:6px;display:none">For cloze cards, wrap the words to hide in <code>{{c1::double braces}}</code>. They'll be blanked out during study.</div>
-      <textarea class="code-editor" id="cf-code" spellcheck="false" placeholder="${esc(preset.answerPlaceholder)}">${esc(shard.code)}</textarea>
       <div class="section-title" style="margin-top:12px">Description</div>
       <textarea id="cf-desc" style="width:100%;min-height:80px" placeholder="Why does this work? When would you use it? (markdown-lite: **bold**, *italic*, \`code\`)">${esc(shard.description)}</textarea>
       <div id="cf-media-slot"></div>
@@ -153,7 +160,9 @@ export function buildCardFields(ctx, shard) {
   // ---- Two-way sync between the tag controls and the free-form tags field ----
   function controlsFromField() {
     const tags = parseTags(tagsInput.value);
-    diffSel.value = getDifficulty(tags);
+    // Difficulty is mandatory — the dropdown always shows a valid level (defaulting
+    // to the first, "beginner"), even if the free-form tags don't list one yet.
+    diffSel.value = getDifficulty(tags) || DIFFICULTIES[0];
     foundationChk.checked = isFoundation(tags);
     revealChk.checked = isRevealOnly(tags);
   }
@@ -230,6 +239,10 @@ export function buildCardFields(ctx, shard) {
   });
 
   function collect() {
+    // Guarantee a difficulty tag (mandatory, item 2): if the free-form tags don't
+    // carry one, stamp in the dropdown's selected level (defaulting to beginner).
+    let tags = parseTags(tagsInput.value);
+    if (!getDifficulty(tags)) tags = setDifficulty(tags, diffSel.value || DIFFICULTIES[0]);
     return {
       title: node.querySelector("#cf-title").value.trim(),
       prompt: promptEl.value.trim(),
@@ -238,7 +251,7 @@ export function buildCardFields(ctx, shard) {
       category: node.querySelector("#cf-cat").value,
       familiarity: node.querySelector("#cf-fam").value,
       source: node.querySelector("#cf-source").value.trim(),
-      tags: parseTags(tagsInput.value),
+      tags,
       code: codeEl.value,
       description: descEl.value,
       media: media.getItems(),

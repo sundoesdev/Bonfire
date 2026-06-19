@@ -293,6 +293,9 @@ textarea { resize: vertical; }
 .list-row .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list-row .cat { color: var(--muted); }
 .review-dot { color: var(--due); }
+/* Built-in (native) decks read as non-editable: subdued, with a muted title. */
+.list-row.native-deck { opacity: 0.62; }
+.list-row.native-deck .title { color: var(--muted); }
 .list-row .review-btn { margin-left: 16px; }
 
 /* ---- Library ---- */
@@ -358,6 +361,8 @@ textarea { resize: vertical; }
 .rating .good { background: #3b82f6; }
 .rating .easy { background: #10b981; }
 .rating button:hover { opacity: 0.9; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+/* The 1/2/3/4 hotkey hint chip on each rating button (item 4). */
+.rating-key { display: inline-block; min-width: 16px; padding: 0 4px; margin-right: 2px; border-radius: 4px; background: rgba(0,0,0,0.22); font-size: 11px; font-weight: 700; opacity: 0.85; }
 .full-width { width: 100%; }
 
 /* ---- Modal (Quick Capture) ---- */
@@ -384,6 +389,50 @@ textarea { resize: vertical; }
 }
 /* The card Add / View-Edit popout is taller — widen it and let it scroll. */
 .modal-card { width: 600px; max-height: 86vh; overflow-y: auto; }
+/* Yes/no confirm dialog (confirm.js) sits above any open modal (z 100) but below
+   toasts (z 200) — it can stack on top of the Add/Edit card popout. */
+.confirm-backdrop { z-index: 150; }
+.modal-confirm { width: 420px; }
+
+/* Library bulk-action toolbar: pinned to the top of the scroll area so it stays
+   visible (and reachable) while scrolling a long card list. */
+.bulk-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--bg);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+/* Compact bulk-action dropdown menu (item 6), floated under its trigger button. */
+.bulk-menu {
+  position: fixed;
+  z-index: 160;
+  min-width: 180px;
+  background: var(--panel-bg, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+.bulk-menu-item {
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 7px 10px;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  font-size: 13px;
+}
+.bulk-menu-item:hover { background: var(--glass-bg); }
+.bulk-menu-sep { height: 1px; background: var(--border); margin: 4px 2px; }
+
 .modal h2 { margin: 0 0 14px; font-size: 15px; }
 .modal .field { margin-bottom: 10px; display: flex; flex-direction: column; gap: 4px; }
 .modal .field label { color: var(--muted-2); }

@@ -110,7 +110,22 @@ export function cmMode(lang) {
 // the default "Code" deck. `showLanguage`/`highlight` gate the code-only bits;
 // `answerLabel`/`answerPlaceholder` relabel the answer field.
 export const DEFAULT_DECK_ID = "default";
+// The always-present, non-deletable auto "Debt" deck (overdue cards). Kept in
+// sync by the backend; mirror of db.rs DEBT_DECK_ID.
+export const DEBT_DECK_ID = "card-debt";
+// Sentinel "deck" meaning every card regardless of membership — the library of all
+// cards (decks are wrappers, so a card lives here whether it's in 0 or many decks).
+export const ALL_DECKS = "__all__";
 export const DEFAULT_PRESET = "code";
+
+// "Native" decks ship with Bonfire and are required for its functionality — they
+// can't be deleted or renamed (item 2, notes-03). Settings can grey them out and
+// optionally hide them from the deck-management list.
+export const NATIVE_DECK_IDS = new Set([DEFAULT_DECK_ID, DEBT_DECK_ID]);
+
+export function isNativeDeck(id) {
+  return NATIVE_DECK_IDS.has(id);
+}
 
 export const SUBJECT_PRESETS = {
   code: {

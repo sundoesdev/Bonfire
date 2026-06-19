@@ -1,7 +1,7 @@
 // App entry: holds shared state, wires the sidebar + global shortcuts, and
 // renders the active view into #view. View modules export render(container, ctx, params).
 import * as api from "./api.js";
-import { DEFAULT_LANGUAGES, DEFAULT_DECK_ID, presetConfig } from "./constants.js";
+import { DEFAULT_LANGUAGES, DEFAULT_DECK_ID, ALL_DECKS, presetConfig } from "./constants.js";
 import { renderDashboard } from "./views/dashboard.js";
 import { renderLibrary } from "./views/library.js";
 import { renderStudy } from "./views/study.js";
@@ -12,6 +12,7 @@ import { openQuickCapture } from "./components/quickCapture.js";
 import { openCardModal } from "./components/cardModal.js";
 import { showToast } from "./components/toast.js";
 import { openCommandPalette } from "./components/commandPalette.js";
+import { confirmDialog } from "./components/confirm.js";
 import { loadAppearance } from "./theme.js";
 import { checkForUpdate, applyUpdate } from "./update.js";
 
@@ -40,6 +41,13 @@ let deckSwitcher;
 // Reload shards, decks, and custom languages from the backend, then scope the
 // view-facing `shards` array to the current deck.
 async function refreshShards() {
+  // Reconcile the auto Debt deck (overdue cards in / caught-up cards out) before
+  // reading, so it's accurate wherever the user looks. Cheap, set-based SQL.
+  try {
+    await api.syncDebtDeck();
+  } catch (_e) {
+    /* non-fatal — fall back to whatever's stored */
+  }
   const [shards, custom, decks] = await Promise.all([
     api.listShards(),
     api.listCustomLanguages(),
@@ -49,13 +57,18 @@ async function refreshShards() {
   state.customLanguages = custom;
   state.decks = decks;
 
-  // Fall back to the default deck if the remembered one no longer exists.
-  if (!decks.some((d) => d.id === state.currentDeckId)) {
+  // Fall back to the default deck if the remembered one no longer exists ("All
+  // decks" is a valid pseudo-deck, not a real row, so it's exempt).
+  if (state.currentDeckId !== ALL_DECKS && !decks.some((d) => d.id === state.currentDeckId)) {
     state.currentDeckId = decks.some((d) => d.id === DEFAULT_DECK_ID)
       ? DEFAULT_DECK_ID
       : decks[0]?.id || DEFAULT_DECK_ID;
   }
-  state.shards = shards.filter((s) => s.deckId === state.currentDeckId);
+  // "All decks" shows every card regardless of membership (the full library).
+  state.shards =
+    state.currentDeckId === ALL_DECKS
+      ? shards
+      : shards.filter((s) => (s.deckIds || []).includes(state.currentDeckId));
   populateDeckSwitcher();
 }
 
@@ -75,9 +88,12 @@ function currentPreset() {
 
 function populateDeckSwitcher() {
   if (!deckSwitcher) return;
-  deckSwitcher.innerHTML = state.decks
-    .map((d) => `<option value="${d.id}">${escapeOpt(d.name) || "(unnamed)"}</option>`)
-    .join("");
+  // "All decks" first (the full library), then each deck wrapper.
+  deckSwitcher.innerHTML =
+    `<option value="${ALL_DECKS}">All decks</option>` +
+    state.decks
+      .map((d) => `<option value="${d.id}">${escapeOpt(d.name) || "(unnamed)"}</option>`)
+      .join("");
   deckSwitcher.value = state.currentDeckId;
 }
 
@@ -122,6 +138,10 @@ const ctx = {
   state,
   languages,
   navigate,
+  // Study session nav lock (item 6): runSession sets these; the sidebar / deck
+  // switcher / shortcuts check them before letting the user leave.
+  studyActive: false,
+  endStudySession: null,
   refreshView: () => navigate(currentView()),
   decks: () => state.decks,
   currentDeck,
@@ -147,6 +167,9 @@ const ctx = {
   },
   weakStudy: () => navigate("study", { weak: true }),
   reviewCard: (id) => navigate("study", { single: id }),
+  // Study an explicit set of cards in one session (e.g. "Study all" from the
+  // Card Debt list) — the queue is exactly these ids, no due/cap filtering.
+  studyCards: (ids) => navigate("study", { cards: ids }),
   openQuickCapture: () => openQuickCapture(ctx),
   openCommandPalette: () => openCommandPalette(ctx),
   toast: (msg, type) => showToast(msg, type),
@@ -166,12 +189,42 @@ window.addEventListener("DOMContentLoaded", async () => {
     /* ignore */
   }
 
-  deckSwitcher.addEventListener("change", () => setDeck(deckSwitcher.value));
+  // Item 6: while a study session is running, leaving requires confirmation.
+  // Returns true if no session is active (caller may proceed); otherwise it pops
+  // the confirm and, on "End session", shows the session summary — the caller
+  // should NOT continue with its original action either way.
+  async function guardStudy() {
+    if (!ctx.studyActive) return true;
+    const ok = await confirmDialog({
+      title: "End study session?",
+      message: "Are you sure you want to end your study session? Unstudied cards will go unaffected.",
+      confirmLabel: "End session",
+      confirmClass: "btn-danger",
+      cancelLabel: "Keep studying",
+    });
+    if (ok && ctx.endStudySession) ctx.endStudySession();
+    return false;
+  }
+
+  deckSwitcher.addEventListener("change", async () => {
+    if (ctx.studyActive) {
+      deckSwitcher.value = state.currentDeckId; // revert the visible selection
+      await guardStudy();
+      return;
+    }
+    setDeck(deckSwitcher.value);
+  });
 
   document.querySelectorAll("#sidebar nav button").forEach((b) => {
-    b.addEventListener("click", () => navigate(b.dataset.view));
+    b.addEventListener("click", async () => {
+      if (!(await guardStudy())) return;
+      navigate(b.dataset.view);
+    });
   });
-  document.querySelector("#new-shard").addEventListener("click", () => ctx.newShard());
+  document.querySelector("#new-shard").addEventListener("click", async () => {
+    if (!(await guardStudy())) return;
+    ctx.newShard();
+  });
 
   // Auto-updater (scaffold): no-op until the updater plugin is configured.
   const updateBadge = document.querySelector("#update-badge");
@@ -180,21 +233,18 @@ window.addEventListener("DOMContentLoaded", async () => {
     checkForUpdate(ctx, updateBadge);
   }
 
-  // Global shortcuts: Ctrl+N quick capture, Ctrl+K library search.
-  window.addEventListener("keydown", (e) => {
-    if (e.ctrlKey && e.key.toLowerCase() === "p") {
-      e.preventDefault();
-      ctx.openCommandPalette();
-    } else if (e.ctrlKey && e.key.toLowerCase() === "n") {
-      e.preventDefault();
-      ctx.openQuickCapture();
-    } else if (e.ctrlKey && e.key.toLowerCase() === "k") {
-      e.preventDefault();
-      navigate("library", { focusSearch: true });
-    } else if (e.ctrlKey && e.key.toLowerCase() === "d") {
-      e.preventDefault();
-      ctx.quickStudy();
-    }
+  // Global shortcuts: Ctrl+P palette, Ctrl+N quick capture, Ctrl+K library, Ctrl+D study.
+  window.addEventListener("keydown", async (e) => {
+    if (!e.ctrlKey) return;
+    const k = e.key.toLowerCase();
+    if (!["p", "n", "k", "d"].includes(k)) return;
+    e.preventDefault();
+    // During a study session these shortcuts all "leave" — gate them (item 6).
+    if (!(await guardStudy())) return;
+    if (k === "p") ctx.openCommandPalette();
+    else if (k === "n") ctx.openQuickCapture();
+    else if (k === "k") navigate("library", { focusSearch: true });
+    else if (k === "d") ctx.quickStudy();
   });
 
   navigate("dashboard");

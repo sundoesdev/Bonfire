@@ -42,9 +42,16 @@ fn save_shard(state: State<AppState>, mut shard: Shard) -> Result<Shard, String>
     } else if shard.created_at.is_empty() {
         shard.created_at = now.clone();
     }
-    if shard.deck_id.trim().is_empty() {
-        shard.deck_id = db::DEFAULT_DECK_ID.to_string();
+    // Normalize deck membership: deck_ids is the source of truth. Fall back to the
+    // legacy single deck_id, then the default deck, so a card always has a home.
+    if shard.deck_ids.is_empty() {
+        if !shard.deck_id.trim().is_empty() {
+            shard.deck_ids = vec![shard.deck_id.clone()];
+        } else {
+            shard.deck_ids = vec![db::DEFAULT_DECK_ID.to_string()];
+        }
     }
+    shard.deck_id = shard.deck_ids[0].clone();
     if shard.card_type.trim().is_empty() {
         shard.card_type = "basic".to_string();
     }
@@ -80,7 +87,17 @@ fn delete_deck(state: State<AppState>, id: String) -> Result<(), String> {
     if id == db::DEFAULT_DECK_ID {
         return Err("The default deck cannot be deleted.".into());
     }
+    if id == db::DEBT_DECK_ID {
+        return Err("The Debt deck cannot be deleted.".into());
+    }
     with_conn(&state, |c| db::delete_deck(c, &id))
+}
+
+/// Reconcile the Debt deck with the current overdue cards (item 5). Called by the
+/// frontend on refresh; cheap, set-based SQL.
+#[tauri::command]
+fn sync_debt_deck(state: State<AppState>) -> Result<(), String> {
+    with_conn(&state, |c| db::sync_debt_deck(c))
 }
 
 #[tauri::command]
@@ -91,6 +108,79 @@ fn delete_shard(state: State<AppState>, id: String) -> Result<(), String> {
 #[tauri::command]
 fn delete_all_shards(state: State<AppState>) -> Result<usize, String> {
     with_conn(&state, |c| db::delete_all_shards(c))
+}
+
+/// Bulk-delete the given cards. Returns the number removed.
+#[tauri::command]
+fn delete_shards(state: State<AppState>, ids: Vec<String>) -> Result<usize, String> {
+    with_conn(&state, |c| db::delete_shards(c, &ids))
+}
+
+/// Add a deck membership to each card (many-to-many). Returns memberships added.
+#[tauri::command]
+fn add_cards_to_deck(state: State<AppState>, ids: Vec<String>, deck_id: String) -> Result<usize, String> {
+    with_conn(&state, |c| db::add_cards_to_deck(c, &ids, &deck_id))
+}
+
+/// Remove a deck membership from each card (a card left deckless is re-homed to
+/// the default deck). Returns memberships removed.
+#[tauri::command]
+fn remove_cards_from_deck(
+    state: State<AppState>,
+    ids: Vec<String>,
+    deck_id: String,
+) -> Result<usize, String> {
+    with_conn(&state, |c| db::remove_cards_from_deck(c, &ids, &deck_id))
+}
+
+/// Replace the tag list on each given card. Returns the number changed.
+#[tauri::command]
+fn retag_shards(state: State<AppState>, ids: Vec<String>, tags: Vec<String>) -> Result<usize, String> {
+    let tags: Vec<String> = tags
+        .into_iter()
+        .map(|t| t.trim().to_lowercase())
+        .filter(|t| !t.is_empty())
+        .collect();
+    with_conn(&state, |c| db::retag_shards(c, &ids, &tags))
+}
+
+/// Manually re-set a card's spaced-repetition schedule to a chosen maturity level
+/// (item 5, Card Debt). Bonfire never does this on its own — the user picks how
+/// well they remember an overdue card. Levels: new / semiNew / half / good / full.
+#[tauri::command]
+fn reset_card_schedule(state: State<AppState>, id: String, level: String) -> Result<Shard, String> {
+    let mut shard = with_conn(&state, |c| db::get_shard(c, &id))?
+        .ok_or_else(|| format!("Shard not found: {}", id))?;
+
+    // (interval days, repetitions, ease, familiarity) ladder, anchored to SM-2.
+    let (interval, reps, ease, fam) = match level.as_str() {
+        "new" => (0_i64, 0_i64, 2.5_f64, "fresh"),
+        "semiNew" => (1, 1, 2.5, "shaky"),
+        "half" => (3, 2, 2.5, "shaky"),
+        "good" => (7, 3, 2.5, "solid"),
+        "full" => (21, 4, 2.6, "mastered"),
+        _ => return Err(format!("Unknown reset level: {}", level)),
+    };
+    let next = (chrono::Local::now().date_naive() + chrono::Duration::days(interval))
+        .format("%Y-%m-%d")
+        .to_string();
+
+    shard.review_enabled = true;
+    shard.review_interval = interval;
+    shard.review_repetitions = reps;
+    shard.review_ease = ease;
+    shard.review_next = next;
+    shard.familiarity = fam.to_string();
+    // FSRS equivalents, used when that algorithm is active.
+    shard.fsrs_stability = interval.max(0) as f64;
+    shard.fsrs_difficulty = 5.0;
+    shard.fsrs_state = if level == "new" { "new".to_string() } else { "review".to_string() };
+    // Treat the reset moment as the last review so elapsed-time math stays sane.
+    shard.last_reviewed = now_iso();
+    shard.modified_at = now_iso();
+
+    with_conn(&state, |c| db::save_shard(c, &shard))?;
+    Ok(shard)
 }
 
 #[tauri::command]
@@ -340,10 +430,16 @@ pub fn run() {
             save_shard,
             delete_shard,
             delete_all_shards,
+            delete_shards,
+            add_cards_to_deck,
+            remove_cards_from_deck,
+            retag_shards,
+            reset_card_schedule,
             clear_review_log,
             list_decks,
             save_deck,
             delete_deck,
+            sync_debt_deck,
             submit_review,
             review_history,
             study_days,

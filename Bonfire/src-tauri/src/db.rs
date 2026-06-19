@@ -5,6 +5,11 @@ use uuid::Uuid;
 /// Fixed id of the always-present default deck that ungrouped cards fall back to.
 pub const DEFAULT_DECK_ID: &str = "default";
 
+/// Fixed id of the always-present, non-deletable "Debt" deck. Overdue cards are
+/// auto-added here (and removed once caught up) by `sync_debt_deck`, so the user
+/// can browse / mass-select / study their debt like any other deck.
+pub const DEBT_DECK_ID: &str = "card-debt";
+
 /// Create the schema if it does not already exist.
 pub fn init(conn: &Connection) -> Result<()> {
     conn.execute_batch(
@@ -59,6 +64,11 @@ pub fn init(conn: &Connection) -> Result<()> {
             position    INTEGER NOT NULL DEFAULT 0,
             created_at  TEXT NOT NULL DEFAULT '',
             modified_at TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS card_decks (
+            card_id TEXT NOT NULL,
+            deck_id TEXT NOT NULL,
+            PRIMARY KEY (card_id, deck_id)
         );",
     )?;
     migrate(conn)
@@ -116,10 +126,24 @@ fn migrate(conn: &Connection) -> Result<()> {
         "UPDATE decks SET name = 'Default' WHERE id = ?1 AND name = 'Code'",
         params![DEFAULT_DECK_ID],
     )?;
+    // The always-present, non-deletable "Debt" deck (sorted last in the switcher).
+    conn.execute(
+        "INSERT OR IGNORE INTO decks (id, name, preset, position, created_at, modified_at)
+         VALUES (?1, 'Debt', 'code', 999, ?2, ?2)",
+        params![DEBT_DECK_ID, now],
+    )?;
     conn.execute(
         "UPDATE shards SET deck_id = ?1
          WHERE deck_id = '' OR deck_id IS NULL OR deck_id NOT IN (SELECT id FROM decks)",
         params![DEFAULT_DECK_ID],
+    )?;
+
+    // Many-to-many decks: backfill the card_decks join table from the legacy
+    // single deck_id column (idempotent — INSERT OR IGNORE on the composite key).
+    conn.execute(
+        "INSERT OR IGNORE INTO card_decks (card_id, deck_id)
+         SELECT id, deck_id FROM shards WHERE deck_id <> ''",
+        [],
     )?;
     Ok(())
 }
@@ -179,6 +203,7 @@ fn row_to_shard(row: &rusqlite::Row) -> Result<Shard> {
         code: row.get("code")?,
         description: row.get("description")?,
         deck_id: row.get("deck_id")?,
+        deck_ids: Vec::new(), // populated separately from card_decks
         card_type: row.get("card_type")?,
         tags: serde_json::from_str(&tags_json).unwrap_or_default(),
         category: row.get("category")?,
@@ -201,19 +226,85 @@ fn row_to_shard(row: &rusqlite::Row) -> Result<Shard> {
     })
 }
 
-/// All shards, most-recently-modified first.
-pub fn all_shards(conn: &Connection) -> Result<Vec<Shard>> {
-    let mut stmt = conn.prepare("SELECT * FROM shards ORDER BY modified_at DESC")?;
-    let rows = stmt.query_map([], row_to_shard)?;
+/// Deck memberships for one card (from the card_decks join table).
+fn deck_ids_for(conn: &Connection, card_id: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT deck_id FROM card_decks WHERE card_id = ?1 ORDER BY deck_id")?;
+    let rows = stmt.query_map(params![card_id], |r| r.get::<_, String>(0))?;
     rows.collect()
 }
 
-/// Fetch a single shard by id.
+/// Set a card's legacy `deck_id` mirror to its first *real* membership (the Debt
+/// deck is deprioritized so review-log/heatmap attribution stays on a real deck),
+/// or '' if none. Cosmetic only — no logic depends on the mirror.
+fn sync_legacy_deck(conn: &Connection, card_id: &str) -> Result<()> {
+    let first: Option<String> = conn
+        .query_row(
+            "SELECT deck_id FROM card_decks WHERE card_id = ?1
+             ORDER BY (deck_id = ?2), deck_id LIMIT 1",
+            params![card_id, DEBT_DECK_ID],
+            |r| r.get(0),
+        )
+        .ok();
+    conn.execute(
+        "UPDATE shards SET deck_id = ?2 WHERE id = ?1",
+        params![card_id, first.unwrap_or_default()],
+    )?;
+    Ok(())
+}
+
+/// Reconcile the Debt deck with reality: add every review-enabled, overdue card
+/// (reviewNext strictly before today) and remove any current member that's caught
+/// up (review disabled, no due date, or due today/later). Cards keep their real
+/// decks — Debt membership is additive. Cheap: two set-based statements.
+pub fn sync_debt_deck(conn: &Connection) -> Result<()> {
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    conn.execute(
+        "INSERT OR IGNORE INTO card_decks (card_id, deck_id)
+         SELECT id, ?1 FROM shards
+         WHERE review_enabled = 1 AND review_next <> '' AND review_next < ?2",
+        params![DEBT_DECK_ID, today],
+    )?;
+    conn.execute(
+        "DELETE FROM card_decks
+         WHERE deck_id = ?1 AND card_id IN (
+            SELECT id FROM shards
+            WHERE review_enabled = 0 OR review_next = '' OR review_next >= ?2
+         )",
+        params![DEBT_DECK_ID, today],
+    )?;
+    Ok(())
+}
+
+/// All shards, most-recently-modified first, with deck memberships populated.
+pub fn all_shards(conn: &Connection) -> Result<Vec<Shard>> {
+    let mut stmt = conn.prepare("SELECT * FROM shards ORDER BY modified_at DESC")?;
+    let rows = stmt.query_map([], row_to_shard)?;
+    let mut shards: Vec<Shard> = rows.collect::<Result<_>>()?;
+
+    // One pass over the join table → map of card_id -> deck_ids.
+    let mut map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut jstmt = conn.prepare("SELECT card_id, deck_id FROM card_decks ORDER BY deck_id")?;
+    let jrows = jstmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+    for row in jrows {
+        let (cid, did) = row?;
+        map.entry(cid).or_default().push(did);
+    }
+    for s in &mut shards {
+        s.deck_ids = map.remove(&s.id).unwrap_or_default();
+    }
+    Ok(shards)
+}
+
+/// Fetch a single shard by id, with deck memberships populated.
 pub fn get_shard(conn: &Connection, id: &str) -> Result<Option<Shard>> {
     let mut stmt = conn.prepare("SELECT * FROM shards WHERE id = ?1")?;
     let mut rows = stmt.query_map(params![id], row_to_shard)?;
     match rows.next() {
-        Some(r) => Ok(Some(r?)),
+        Some(r) => {
+            let mut s = r?;
+            s.deck_ids = deck_ids_for(conn, id)?;
+            Ok(Some(s))
+        }
         None => Ok(None),
     }
 }
@@ -243,18 +334,92 @@ pub fn save_shard(conn: &Connection, s: &Shard) -> Result<()> {
             s.fsrs_stability, s.fsrs_difficulty, s.fsrs_state, s.lapses, media,
         ],
     )?;
+
+    // Rewrite the card's deck memberships from `deck_ids` (the source of truth).
+    // Fall back to the legacy single deck_id, then the default deck, so a card is
+    // never silently orphaned on a plain save.
+    let mut decks: Vec<String> = s.deck_ids.clone();
+    if decks.is_empty() && !s.deck_id.is_empty() {
+        decks.push(s.deck_id.clone());
+    }
+    if decks.is_empty() {
+        decks.push(DEFAULT_DECK_ID.to_string());
+    }
+    conn.execute("DELETE FROM card_decks WHERE card_id = ?1", params![s.id])?;
+    for d in &decks {
+        if !d.is_empty() {
+            conn.execute(
+                "INSERT OR IGNORE INTO card_decks (card_id, deck_id) VALUES (?1, ?2)",
+                params![s.id, d],
+            )?;
+        }
+    }
+    sync_legacy_deck(conn, &s.id)?;
     Ok(())
 }
 
 pub fn delete_shard(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM card_decks WHERE card_id = ?1", params![id])?;
     conn.execute("DELETE FROM shards WHERE id = ?1", params![id])?;
     Ok(())
 }
 
+/// Delete the given shards. Returns the number removed.
+pub fn delete_shards(conn: &Connection, ids: &[String]) -> Result<usize> {
+    let mut n = 0;
+    for id in ids {
+        conn.execute("DELETE FROM card_decks WHERE card_id = ?1", params![id])?;
+        n += conn.execute("DELETE FROM shards WHERE id = ?1", params![id])?;
+    }
+    Ok(n)
+}
+
 /// Delete every shard. Returns the number removed.
 pub fn delete_all_shards(conn: &Connection) -> Result<usize> {
+    conn.execute("DELETE FROM card_decks", [])?;
     let n = conn.execute("DELETE FROM shards", [])?;
     Ok(n)
+}
+
+/// Add a deck membership to each card (no-op for already-members). Returns rows added.
+pub fn add_cards_to_deck(conn: &Connection, ids: &[String], deck_id: &str) -> Result<usize> {
+    let mut n = 0;
+    for id in ids {
+        n += conn.execute(
+            "INSERT OR IGNORE INTO card_decks (card_id, deck_id) VALUES (?1, ?2)",
+            params![id, deck_id],
+        )?;
+        sync_legacy_deck(conn, id)?;
+    }
+    Ok(n)
+}
+
+/// Remove a deck membership from each card. Decks are wrappers, not containers —
+/// a card may end up in no deck at all (it still exists, browsable via "All decks"
+/// and flagged by the integrity scanner). Returns the number of memberships removed.
+pub fn remove_cards_from_deck(conn: &Connection, ids: &[String], deck_id: &str) -> Result<usize> {
+    let mut n = 0;
+    for id in ids {
+        n += conn.execute(
+            "DELETE FROM card_decks WHERE card_id = ?1 AND deck_id = ?2",
+            params![id, deck_id],
+        )?;
+        sync_legacy_deck(conn, id)?;
+    }
+    Ok(n)
+}
+
+/// Replace the tag list on each given card. Returns the number changed.
+pub fn retag_shards(conn: &Connection, ids: &[String], tags: &[String]) -> Result<usize> {
+    let mut changed = 0;
+    for id in ids {
+        if let Some(mut s) = get_shard(conn, id)? {
+            s.tags = tags.to_vec();
+            save_shard(conn, &s)?;
+            changed += 1;
+        }
+    }
+    Ok(changed)
 }
 
 /// Delete every review-log entry (wipes heatmap / streak / activity stats).
@@ -303,11 +468,19 @@ pub fn save_deck(conn: &Connection, d: &Deck) -> Result<()> {
     Ok(())
 }
 
-/// Delete a deck, reassigning its cards to the default deck so none are orphaned.
+/// Delete a deck (a wrapper). Its membership rows are removed; cards stay in any
+/// other decks they belong to, and a card left in none simply becomes deckless —
+/// it still exists (browsable via "All decks", flagged by the integrity scanner).
 pub fn delete_deck(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM card_decks WHERE deck_id = ?1", params![id])?;
+    // Re-sync the legacy mirror for any card whose mirror pointed at this deck
+    // (to its first remaining real membership, or '' if none).
     conn.execute(
-        "UPDATE shards SET deck_id = ?1 WHERE deck_id = ?2",
-        params![DEFAULT_DECK_ID, id],
+        "UPDATE shards SET deck_id = COALESCE((
+             SELECT deck_id FROM card_decks WHERE card_id = shards.id
+             ORDER BY (deck_id = ?2), deck_id LIMIT 1
+         ), '') WHERE deck_id = ?1",
+        params![id, DEBT_DECK_ID],
     )?;
     conn.execute("DELETE FROM decks WHERE id = ?1", params![id])?;
     Ok(())
@@ -510,11 +683,22 @@ pub fn import_export(conn: &Connection, export: &VaultExport) -> Result<usize> {
             )?;
         }
     }
-    // Adopt any card whose deck no longer exists (e.g. older exports) into the default deck.
+    // Drop memberships pointing at decks that don't exist (junk in older/partial
+    // exports), then ensure every shard belongs to at least one deck (default).
     conn.execute(
-        "UPDATE shards SET deck_id = ?1
-         WHERE deck_id = '' OR deck_id IS NULL OR deck_id NOT IN (SELECT id FROM decks)",
+        "DELETE FROM card_decks WHERE deck_id NOT IN (SELECT id FROM decks)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO card_decks (card_id, deck_id)
+         SELECT id, ?1 FROM shards WHERE id NOT IN (SELECT card_id FROM card_decks)",
         params![DEFAULT_DECK_ID],
+    )?;
+    // Re-sync the legacy mirror column for every shard.
+    conn.execute(
+        "UPDATE shards SET deck_id = COALESCE(
+            (SELECT deck_id FROM card_decks WHERE card_id = shards.id ORDER BY deck_id LIMIT 1), '')",
+        [],
     )?;
     Ok(imported)
 }

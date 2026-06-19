@@ -6,6 +6,7 @@ import { el, esc, metaBadges } from "../dom.js";
 import { mdLite } from "../markdown.js";
 import { highlightInto } from "../highlight.js";
 import { buildCardFields, blankShard } from "./cardFields.js";
+import { confirmDialog } from "./confirm.js";
 
 // Read-only attachments markup for View mode, grouped by side.
 function mediaViewHtml(media) {
@@ -38,6 +39,10 @@ export function openCardModal(ctx, { id } = {}) {
   const preset = ctx.currentPreset();
 
   let mode = "view";
+  // Edit-mode dirty flag + current save handler, for the discard guard (item 8)
+  // and Ctrl+Enter save (item 3).
+  let dirty = false;
+  let editSave = null;
 
   const backdrop = el(`<div class="modal-backdrop"><div class="modal modal-card" id="cm-modal"></div></div>`);
   const modal = backdrop.querySelector("#cm-modal");
@@ -46,15 +51,34 @@ export function openCardModal(ctx, { id } = {}) {
     root.innerHTML = "";
     document.removeEventListener("keydown", onKey);
   }
+  // Guarded close: in edit mode with unsaved changes, confirm before discarding.
+  async function tryClose() {
+    if (mode === "edit" && dirty) {
+      const ok = await confirmDialog({
+        title: "Discard changes?",
+        message: "Your unsaved edits to this card will be lost.",
+        confirmLabel: "Discard",
+        confirmClass: "btn-danger",
+        cancelLabel: "Keep editing",
+      });
+      if (!ok) return;
+    }
+    close();
+  }
   function onKey(e) {
-    if (e.key === "Escape") close();
+    if (e.key === "Escape") tryClose();
+    else if (mode === "edit" && e.ctrlKey && e.key === "Enter") {
+      e.preventDefault();
+      if (editSave) editSave();
+    }
   }
   backdrop.addEventListener("mousedown", (e) => {
-    if (e.target === backdrop) close();
+    if (e.target === backdrop) tryClose();
   });
 
   // ---- View mode ----
   function renderView() {
+    editSave = null;
     const meta = [shard.language, shard.category, shard.familiarity].filter(Boolean).join(" · ");
     modal.innerHTML = "";
     const body = el(`
@@ -112,6 +136,7 @@ export function openCardModal(ctx, { id } = {}) {
   // ---- Edit mode ----
   function renderEdit() {
     modal.innerHTML = "";
+    dirty = false;
     const fields = buildCardFields(ctx, shard);
     const wrap = el(`
       <div>
@@ -128,17 +153,11 @@ export function openCardModal(ctx, { id } = {}) {
     wrap.querySelector("#cm-fields-slot").appendChild(fields.node);
     modal.appendChild(wrap);
 
-    wrap.querySelector("#cm-cancel").addEventListener("click", () => {
-      mode = "view";
-      render();
-    });
-    wrap.querySelector("#cm-edel").addEventListener("click", async () => {
-      if (!confirm("Delete this shard?")) return;
-      await ctx.api.deleteShard(shard.id);
-      close();
-      ctx.refreshView();
-    });
-    wrap.querySelector("#cm-save").addEventListener("click", async () => {
+    // Mark dirty on any user edit, for the discard guard (item 8).
+    fields.node.addEventListener("input", () => { dirty = true; });
+    fields.node.addEventListener("change", () => { dirty = true; });
+
+    async function doSave() {
       const data = fields.collect();
       if (!data.title) {
         alert("Title is required.");
@@ -154,10 +173,24 @@ export function openCardModal(ctx, { id } = {}) {
         updated.reviewNext = new Date().toISOString().slice(0, 10);
       }
       shard = await ctx.api.saveShard(updated);
+      dirty = false;
       await ctx.refreshView();
       mode = "view";
       render();
+    }
+    editSave = doSave;
+
+    wrap.querySelector("#cm-cancel").addEventListener("click", () => {
+      mode = "view";
+      render();
     });
+    wrap.querySelector("#cm-edel").addEventListener("click", async () => {
+      if (!confirm("Delete this shard?")) return;
+      await ctx.api.deleteShard(shard.id);
+      close();
+      ctx.refreshView();
+    });
+    wrap.querySelector("#cm-save").addEventListener("click", doSave);
   }
 
   function render() {

@@ -8,10 +8,16 @@ export const listShards = () => invoke("list_shards");
 export const saveShard = (shard) => invoke("save_shard", { shard });
 export const deleteShard = (id) => invoke("delete_shard", { id });
 export const deleteAllShards = () => invoke("delete_all_shards");
+export const deleteShards = (ids) => invoke("delete_shards", { ids });
+export const addCardsToDeck = (ids, deckId) => invoke("add_cards_to_deck", { ids, deckId });
+export const removeCardsFromDeck = (ids, deckId) => invoke("remove_cards_from_deck", { ids, deckId });
+export const retagShards = (ids, tags) => invoke("retag_shards", { ids, tags });
+export const resetCardSchedule = (id, level) => invoke("reset_card_schedule", { id, level });
 export const clearReviewLog = () => invoke("clear_review_log");
 export const listDecks = () => invoke("list_decks");
 export const saveDeck = (deck) => invoke("save_deck", { deck });
 export const deleteDeck = (id) => invoke("delete_deck", { id });
+export const syncDebtDeck = () => invoke("sync_debt_deck");
 export const submitReview = (id, rating, durationMs, sessionId, cram = false) =>
   invoke("submit_review", { id, rating, durationMs, sessionId, cram });
 export const reviewHistory = () => invoke("review_history");

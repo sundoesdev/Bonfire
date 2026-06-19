@@ -42,8 +42,12 @@ pub struct Shard {
     pub prompt: String,
     pub code: String,
     pub description: String,
-    /// Which deck this card belongs to (empty => migrated to the default deck).
+    /// Legacy single-deck field, kept as a mirror of the first membership for
+    /// back-compat with older JSON exports. The source of truth is `deck_ids`.
     pub deck_id: String,
+    /// Every deck this card belongs to (many-to-many). A card may be in several
+    /// decks, or none ("deckless", surfaced by the integrity scanner).
+    pub deck_ids: Vec<String>,
     /// Study format: "basic" (type the answer), "cloze" ({{c1::..}} blanks),
     /// or "reverse" (answer is shown, recall the title). Empty => "basic".
     pub card_type: String,
@@ -84,6 +88,7 @@ impl Default for Shard {
             code: String::new(),
             description: String::new(),
             deck_id: String::new(),
+            deck_ids: Vec::new(),
             card_type: "basic".to_string(),
             tags: Vec::new(),
             category: "snippet".to_string(),

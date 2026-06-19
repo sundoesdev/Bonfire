@@ -9,7 +9,9 @@
 // setting and pre-seeded into the next blank form. Only the content fields
 // (title/prompt/answer/description/attachments) reset each time.
 import { el } from "../dom.js";
+import { ALL_DECKS, DEFAULT_DECK_ID } from "../constants.js";
 import { buildCardFields, blankShard } from "./cardFields.js";
+import { confirmDialog } from "./confirm.js";
 
 const DEFAULTS_KEY = "card_add_defaults";
 // Fields carried over to the next new card (everything except the content fields).
@@ -40,7 +42,11 @@ export async function openQuickCapture(ctx) {
 
   const defaults = await loadDefaults(ctx);
   // Seed last-used classification; content fields stay blank (from blankShard()).
-  const shard = { ...blankShard(), ...defaults, deckId: ctx.currentDeckId() };
+  // New cards join the current deck; if the library is on "All decks" (no deck
+  // context), they land in the Default deck (the user can re-file them after).
+  const cur = ctx.currentDeckId();
+  const deckIds = [cur && cur !== ALL_DECKS ? cur : DEFAULT_DECK_ID];
+  const shard = { ...blankShard(), ...defaults, deckIds };
   const fields = buildCardFields(ctx, shard);
 
   const backdrop = el(`
@@ -58,19 +64,32 @@ export async function openQuickCapture(ctx) {
   `);
   backdrop.querySelector("#qc-fields-slot").appendChild(fields.node);
 
+  // Track whether the user has typed anything, so an accidental click-outside on a
+  // dirty form asks before discarding (item 8) but an untouched form closes freely.
+  let dirty = false;
+  fields.node.addEventListener("input", () => { dirty = true; });
+  fields.node.addEventListener("change", () => { dirty = true; });
+
   function close() {
     root.innerHTML = "";
     document.removeEventListener("keydown", onKey);
   }
-  function onKey(e) {
-    if (e.key === "Escape") close();
+  // Guarded close: confirm before discarding unsaved work (item 8).
+  async function tryClose() {
+    if (!dirty) {
+      close();
+      return;
+    }
+    const ok = await confirmDialog({
+      title: "Discard this card?",
+      message: "Your unsaved changes will be lost.",
+      confirmLabel: "Discard",
+      confirmClass: "btn-danger",
+      cancelLabel: "Keep editing",
+    });
+    if (ok) close();
   }
-  backdrop.addEventListener("mousedown", (e) => {
-    if (e.target === backdrop) close();
-  });
-  backdrop.querySelector("#qc-cancel").addEventListener("click", close);
-
-  backdrop.querySelector("#qc-save").addEventListener("click", async () => {
+  async function save() {
     const data = fields.collect();
     if (!data.title || !data.code.trim()) {
       alert("Title and answer are required.");
@@ -87,7 +106,19 @@ export async function openQuickCapture(ctx) {
     persistDefaults(ctx, data);
     close();
     ctx.navigate(document.querySelector("#sidebar nav button.active")?.dataset.view || "dashboard");
+  }
+  function onKey(e) {
+    if (e.key === "Escape") tryClose();
+    else if (e.ctrlKey && e.key === "Enter") {
+      e.preventDefault();
+      save();
+    }
+  }
+  backdrop.addEventListener("mousedown", (e) => {
+    if (e.target === backdrop) tryClose();
   });
+  backdrop.querySelector("#qc-cancel").addEventListener("click", close);
+  backdrop.querySelector("#qc-save").addEventListener("click", save);
 
   root.appendChild(backdrop);
   document.addEventListener("keydown", onKey);

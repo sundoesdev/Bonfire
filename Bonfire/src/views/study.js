@@ -4,6 +4,7 @@ import { el, esc, langBadge, metaBadges, isDue, enableTab, todayStr } from "../d
 import { DIFFICULTIES, FAMILIARITY_ORDER, getDifficulty, isFoundation, isRevealOnly, cmMode } from "../constants.js";
 import { highlightInto } from "../highlight.js";
 import { mdLite } from "../markdown.js";
+import { confirmDialog } from "../components/confirm.js";
 
 // Whether the CodeMirror answer editor starts in VIM mode (persisted `editor_vim`).
 let vimEnabled = false;
@@ -63,6 +64,9 @@ function cardTypeBadge(type) {
 }
 
 export const DEFAULT_CONFIG = {
+  // A session is EITHER count-based (N cards, no timer) OR time-based (timer only,
+  // serve every due card) — never both (item 7).
+  sessionMode: "count", // "count" | "time"
   timeLimitMinutes: 30,
   maxCards: 20,
   languages: [], // [] = all
@@ -140,6 +144,13 @@ const diffRank = (s) => {
 // The session queue. Strict SM-2 by default: ONLY cards that are due, most overdue
 // first. Cram mode ignores due dates and practices the whole matching set.
 // `progress` (today's counters) lets the daily new/review caps span sessions.
+// How many cards to keep in the queue: a time-based session serves every matching
+// card (no count cap); a count-based session caps at maxCards (item 7).
+function queueCap(cfg, len) {
+  if (cfg.sessionMode === "time") return len;
+  return Math.max(1, cfg.maxCards || len);
+}
+
 function buildQueue(shards, cfg, progress) {
   const matches = matchingCards(shards, cfg);
   let ordered;
@@ -148,7 +159,7 @@ function buildQueue(shards, cfg, progress) {
     ordered = [...matches].sort(
       (a, b) => diffRank(a) - diffRank(b) || (a.title || "").localeCompare(b.title || "")
     );
-    return ordered.slice(0, Math.max(1, cfg.maxCards || ordered.length));
+    return ordered.slice(0, queueCap(cfg, ordered.length));
   }
 
   const due = matches
@@ -168,7 +179,7 @@ function buildQueue(shards, cfg, progress) {
     if (isNewCard(s)) return newSeen++ < allowedNew;
     return reviewSeen++ < allowedReviews;
   });
-  return ordered.slice(0, Math.max(1, cfg.maxCards || ordered.length));
+  return ordered.slice(0, queueCap(cfg, ordered.length));
 }
 
 // Weak-spot queue: ignores due dates and surfaces the cards you're struggling with
@@ -214,11 +225,17 @@ export function buildStudyConfigForm(ctx, cfg, opts = {}) {
     <div>
       <div class="panel">
         <div class="section-title">Session limits</div>
+        <div class="muted" style="margin-bottom:8px">A session is either <b>by card count</b> (study a fixed number of cards, no timer) or <b>by time</b> (study every due card until your time budget runs out) — pick one.</div>
         <div class="form-grid">
-          <label>Max time (min)</label>
-          <input type="text" id="c-time" value="${cfg.timeLimitMinutes}" />
-          <label>Max cards</label>
+          <label>Session type</label>
+          <select id="c-mode">
+            <option value="count" ${cfg.sessionMode !== "time" ? "selected" : ""}>By card count (no timer)</option>
+            <option value="time" ${cfg.sessionMode === "time" ? "selected" : ""}>By time (all due cards)</option>
+          </select>
+          <label id="c-max-label">Max cards</label>
           <input type="text" id="c-max" value="${cfg.maxCards}" />
+          <label id="c-time-label">Max time (min)</label>
+          <input type="text" id="c-time" value="${cfg.timeLimitMinutes}" />
           ${
             showCaps
               ? `
@@ -235,11 +252,12 @@ export function buildStudyConfigForm(ctx, cfg, opts = {}) {
               : ""
           }
         </div>
-        <div class="muted" style="margin-bottom:8px">${
+        <div class="muted" id="c-mode-hint" style="margin-bottom:8px"></div>
+        ${
           showCaps
-            ? "Daily caps count new cards and reviews across all of today's sessions; Cram mode ignores them."
-            : "Max time is the budget for the session — the timer keeps counting into the negative until you end it. Daily new/review caps live in Settings."
-        }</div>
+            ? `<div class="muted" style="margin-bottom:8px">Daily caps count new cards and reviews across all of today's sessions; Cram mode ignores them.</div>`
+            : ""
+        }
         <div style="margin-bottom:8px">
           <button type="button" class="btn btn-toggle ${cfg.cram ? "on" : ""}" id="c-cram">Cram mode</button>
           <div class="muted" style="margin-top:6px">Practice the whole set, ignoring due dates. Cram never changes a card's schedule, but still counts toward your heatmap and streak.</div>
@@ -284,13 +302,34 @@ export function buildStudyConfigForm(ctx, cfg, opts = {}) {
     b.addEventListener("click", () => b.classList.toggle("on"))
   );
 
+  // Session-type selector shows only the relevant limit field (item 7).
+  const modeSel = node.querySelector("#c-mode");
+  const maxLabel = node.querySelector("#c-max-label");
+  const maxInput = node.querySelector("#c-max");
+  const timeLabel = node.querySelector("#c-time-label");
+  const timeInput = node.querySelector("#c-time");
+  const modeHint = node.querySelector("#c-mode-hint");
+  function syncMode() {
+    const timed = modeSel.value === "time";
+    maxLabel.style.display = timed ? "none" : "";
+    maxInput.style.display = timed ? "none" : "";
+    timeLabel.style.display = timed ? "" : "none";
+    timeInput.style.display = timed ? "" : "none";
+    modeHint.textContent = timed
+      ? "Time-based: every due card is queued and the timer counts your budget down (and into the negative — it never hard-stops). When you clear all due cards, Bonfire offers Cram to keep going until you stop."
+      : "Count-based: study up to Max cards, no timer.";
+  }
+  modeSel.addEventListener("change", syncMode);
+  syncMode();
+
   const readGroup = (name) =>
     [...node.querySelectorAll(`input[data-group="${name}"]:checked`)].map((c) => c.value);
 
   const collect = () => ({
     ...cfg,
-    timeLimitMinutes: parseInt(node.querySelector("#c-time").value, 10) || 0,
-    maxCards: parseInt(node.querySelector("#c-max").value, 10) || 0,
+    sessionMode: modeSel.value === "time" ? "time" : "count",
+    timeLimitMinutes: parseInt(timeInput.value, 10) || 0,
+    maxCards: parseInt(maxInput.value, 10) || 0,
     cram: node.querySelector("#c-cram").classList.contains("on"),
     showPreview: showPreviewToggle ? node.querySelector("#c-preview").classList.contains("on") : cfg.showPreview,
     limitNew: showCaps ? node.querySelector("#c-limitnew").checked : cfg.limitNew,
@@ -322,12 +361,26 @@ export async function renderStudy(container, ctx, params = {}) {
       return;
     }
     runSession(container, ctx, cfg, [shard], {
-      noTimer: true,
+      single: true,
       onDone: async () => {
         await ctx.navigate("dashboard");
         ctx.openShard(shard.id);
       },
     });
+    return;
+  }
+
+  // Study an explicit card set (e.g. "Study all" from Card Debt). The queue is
+  // exactly these cards in order; studying them reschedules normally (clearing
+  // their debt). Count-based (no timer) so the whole set is served, never capped.
+  if (params.cards) {
+    const byId = new Map(ctx.state.allShards.map((s) => [s.id, s]));
+    const queue = params.cards.map((id) => byId.get(id)).filter(Boolean);
+    if (!queue.length) {
+      renderSetup(container, ctx, cfg, "Those cards no longer exist.");
+      return;
+    }
+    runSession(container, ctx, { ...cfg, sessionMode: "count", cram: false }, queue, { pool: queue });
     return;
   }
 
@@ -338,8 +391,8 @@ export async function renderStudy(container, ctx, params = {}) {
       renderSetup(container, ctx, cfg, "No cards to drill in this deck yet.");
       return;
     }
-    if (cfg.showPreview) renderPreview(container, ctx, cfg, queue);
-    else runSession(container, ctx, cfg, queue);
+    if (cfg.showPreview) renderPreview(container, ctx, cfg, queue, ctx.state.shards);
+    else runSession(container, ctx, cfg, queue, { pool: ctx.state.shards });
     return;
   }
 
@@ -351,8 +404,8 @@ export async function renderStudy(container, ctx, params = {}) {
       renderSetup(container, ctx, cfg, "No cards are due right now. Turn on Cram mode to practice anyway.");
       return;
     }
-    if (cfg.showPreview) renderPreview(container, ctx, cfg, queue);
-    else runSession(container, ctx, cfg, queue);
+    if (cfg.showPreview) renderPreview(container, ctx, cfg, queue, ctx.state.shards);
+    else runSession(container, ctx, cfg, queue, { pool: ctx.state.shards });
     return;
   }
 
@@ -412,23 +465,25 @@ function renderSetup(container, ctx, cfg, notice) {
 
   root.querySelector("#weak").addEventListener("click", () => {
     const next = form.collect();
-    const queue = buildWeakQueue(studyPool(), next);
+    const pool = studyPool();
+    const queue = buildWeakQueue(pool, next);
     if (!queue.length) {
       renderSetup(container, ctx, next, "No cards to drill — loosen the filters.");
       return;
     }
-    renderPreview(container, ctx, next, queue);
+    renderPreview(container, ctx, next, queue, pool);
   });
 
   root.querySelector("#build").addEventListener("click", async () => {
     const next = form.collect();
+    const pool = studyPool();
     const progress = await loadProgress(ctx);
-    const queue = buildQueue(studyPool(), next, progress);
+    const queue = buildQueue(pool, next, progress);
     if (!queue.length) {
       renderSetup(container, ctx, next, "No cards match — nothing due (try Cram mode), daily caps reached, or loosen filters.");
       return;
     }
-    renderPreview(container, ctx, next, queue);
+    renderPreview(container, ctx, next, queue, pool);
   });
 
   container.innerHTML = "";
@@ -436,7 +491,8 @@ function renderSetup(container, ctx, cfg, notice) {
 }
 
 // ---------- Editable queue preview ----------
-function renderPreview(container, ctx, cfg, queue) {
+// `pool` is the matching universe (for the timed Cram continuation offer).
+function renderPreview(container, ctx, cfg, queue, pool) {
   function draw() {
     const root = el(`
       <div>
@@ -517,7 +573,9 @@ function renderPreview(container, ctx, cfg, queue) {
     });
 
     root.querySelector("#back").addEventListener("click", () => renderSetup(container, ctx, cfg));
-    root.querySelector("#start").addEventListener("click", () => runSession(container, ctx, cfg, queue));
+    root.querySelector("#start").addEventListener("click", () =>
+      runSession(container, ctx, cfg, queue, { pool: pool || queue })
+    );
 
     container.innerHTML = "";
     container.appendChild(root);
@@ -526,9 +584,25 @@ function renderPreview(container, ctx, cfg, queue) {
 }
 
 // ---------- Running session ----------
+// opts: { single, onDone, pool }. `pool` is the matching universe the queue was
+// built from — used to offer a Cram continuation when a timed session clears all
+// due cards (item 7).
 function runSession(container, ctx, cfg, queue, opts = {}) {
-  const limitMs = opts.noTimer ? 0 : (cfg.timeLimitMinutes || 0) * 60000;
+  // A session is timed only in "time" mode (and never for a single-card review).
+  const timed = cfg.sessionMode === "time" && !opts.single;
+  const limitMs = timed ? (cfg.timeLimitMinutes || 0) * 60000 : 0;
   const onDone = opts.onDone || (() => ctx.navigate("dashboard"));
+  const pool = opts.pool || queue;
+  // Cram can be turned on mid-session by the end-of-time offer, so it's mutable.
+  let cram = !!cfg.cram;
+  let offeredCram = false;
+
+  // Lock navigation away while a real (non single-card) session runs (item 6).
+  if (!opts.single) {
+    ctx.studyActive = true;
+    ctx.endStudySession = () => finish();
+  }
+
   const session = {
     queue: queue.slice(),
     index: 0,
@@ -539,6 +613,8 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
     sessionId: `sess-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     cardShownMs: Date.now(),
     stats: { reviewed: 0, forgot: 0, advanced: 0 },
+    // Removes the active 1/2/3/4 grade-key listener (set by showReveal); null when none.
+    cleanupKeys: null,
   };
 
   function fmt(ms) {
@@ -565,10 +641,60 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
     }, 500);
   }
 
+  // End the session for good: clear the nav lock and show the summary screen.
+  function finish() {
+    // The nav-lock path reaches finish() without going through render(), so tear
+    // down any active grade-key listener here too (item 4).
+    if (session.cleanupKeys) {
+      session.cleanupKeys();
+      session.cleanupKeys = null;
+    }
+    ctx.studyActive = false;
+    ctx.endStudySession = null;
+    container.innerHTML = "";
+    container.appendChild(summary());
+  }
+
+  // When the queue empties: in a timed, non-cram session with cards still left to
+  // practice, offer to keep going in Cram until time runs out (item 7).
+  function maybeFinish() {
+    if (offeredCram || !timed || cram) {
+      finish();
+      return;
+    }
+    offeredCram = true;
+    const studied = new Set(session.queue.map((s) => s.id));
+    const more = buildQueue(pool, { ...cfg, cram: true }).filter((s) => !studied.has(s.id));
+    if (!more.length) {
+      finish();
+      return;
+    }
+    confirmDialog({
+      title: "Time-based session — keep going?",
+      message:
+        "You've cleared every due card. Activate Cram mode to keep practicing this set until you run out of time? (Cram never changes a card's schedule.)",
+      confirmLabel: "Start cram",
+      cancelLabel: "Finish",
+    }).then((yes) => {
+      if (yes) {
+        cram = true;
+        session.queue.push(...more);
+        render();
+      } else {
+        finish();
+      }
+    });
+  }
+
   function render() {
+    // Tear down the previous card's grade-key listener (item 4) before drawing the
+    // next card, so 1/2/3/4 never leak onto a card that hasn't been revealed yet.
+    if (session.cleanupKeys) {
+      session.cleanupKeys();
+      session.cleanupKeys = null;
+    }
     if (session.index >= session.queue.length) {
-      container.innerHTML = "";
-      container.appendChild(summary());
+      maybeFinish();
       return;
     }
     // Clear and let card() attach the new card to the live DOM *before* it wires
@@ -606,12 +732,12 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       // a slow / hung / failed submitReview must never freeze the rating buttons.
       (async () => {
         try {
-          await ctx.api.submitReview(s.id, rating, durationMs, session.sessionId, !!cfg.cram);
+          await ctx.api.submitReview(s.id, rating, durationMs, session.sessionId, cram);
         } catch (_e) {
           /* keep going even if persistence fails */
         }
         // Count toward today's per-day caps (skip in cram, which ignores them).
-        if (!cfg.cram) {
+        if (!cram) {
           try {
             await bumpProgress(ctx, wasNew);
           } catch (_e) {
@@ -738,17 +864,43 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       }
 
       controls.innerHTML = `
-        <div class="muted" style="margin-top:12px">How well did you recall it?</div>
+        <div class="muted" style="margin-top:12px">How well did you recall it? <span class="muted-2">(keys 1–4)</span></div>
         <div class="rating">
-          <button class="forgot" data-r="forgot">Forgot</button>
-          <button class="hard" data-r="hard">Hard</button>
-          <button class="good" data-r="good">Good</button>
-          <button class="easy" data-r="easy">Easy</button>
+          <button class="forgot" data-r="forgot"><span class="rating-key">1</span> Forgot</button>
+          <button class="hard" data-r="hard"><span class="rating-key">2</span> Hard</button>
+          <button class="good" data-r="good"><span class="rating-key">3</span> Good</button>
+          <button class="easy" data-r="easy"><span class="rating-key">4</span> Easy</button>
         </div>
       `;
+      // Grade via click OR keys 1/2/3/4 (left→right). The keys are wired ONLY here,
+      // after the answer is revealed — so typing 1234 into the answer never grades.
+      // A single `graded` flag shared by both paths prevents a click+key double-fire.
+      let graded = false;
+      function grade(rating) {
+        if (graded) return;
+        graded = true;
+        if (session.cleanupKeys) {
+          session.cleanupKeys();
+          session.cleanupKeys = null;
+        }
+        gradeAndAdvance(s, rating)();
+      }
       controls.querySelectorAll(".rating button").forEach((b) =>
-        b.addEventListener("click", gradeAndAdvance(s, b.dataset.r))
+        b.addEventListener("click", () => grade(b.dataset.r))
       );
+      const KEY_RATINGS = { 1: "forgot", 2: "hard", 3: "good", 4: "easy" };
+      function onGradeKey(e) {
+        const rating = KEY_RATINGS[e.key];
+        if (!rating) return;
+        // Defensive: ignore if focus is in an editable field (the answer editor is
+        // already torn down on reveal, but a stray focus shouldn't grade).
+        const a = document.activeElement;
+        if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return;
+        e.preventDefault();
+        grade(rating);
+      }
+      document.addEventListener("keydown", onGradeKey);
+      session.cleanupKeys = () => document.removeEventListener("keydown", onGradeKey);
     }
 
     if (revealOnly) {

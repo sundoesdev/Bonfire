@@ -135,7 +135,7 @@ function weakTags(shards) {
 function deckMastery(decks, allShards) {
   return decks
     .map((d) => {
-      const cards = allShards.filter((s) => s.deckId === d.id);
+      const cards = allShards.filter((s) => (s.deckIds || []).includes(d.id));
       const mastery = cards.length
         ? Math.round((cards.reduce((a, s) => a + (FAM_RANK[s.familiarity] ?? 1) / 3, 0) / cards.length) * 100)
         : 0;
@@ -215,6 +215,71 @@ function retentionChart(pts) {
     </div>`;
 }
 
+// Card debt (item 5): cards whose scheduled review (reviewNext) is in the PAST.
+// Purely computed — Bonfire stores nothing and changes nothing. Most overdue first.
+function cardDebt(allShards) {
+  const now = Date.now();
+  const today = ymd(midnight(new Date()));
+  return allShards
+    .filter((s) => s.reviewEnabled && s.reviewNext && s.reviewNext < today)
+    .map((s) => {
+      const dueMs = new Date(s.reviewNext + "T00:00:00").getTime();
+      const ms = Math.max(0, now - dueMs);
+      return { s, ms, days: Math.floor(ms / 86400000), hours: Math.floor((ms % 86400000) / 3600000) };
+    })
+    .sort((a, b) => b.ms - a.ms);
+}
+
+const RESET_LEVELS = [
+  { id: "new", label: "Brand new" },
+  { id: "semiNew", label: "Semi-new" },
+  { id: "half", label: "Half-remembered" },
+  { id: "good", label: "Good" },
+  { id: "full", label: "Fully remembered" },
+];
+
+// Modal asking the user how well they remember an overdue card. Resolves a level
+// id (new/semiNew/half/good/full) or null on cancel. The USER decides — Bonfire
+// never picks for them.
+function resetLevelDialog(title) {
+  return new Promise((resolve) => {
+    const buttons = RESET_LEVELS.map(
+      (l) => `<button class="btn btn-secondary reset-lvl" data-lvl="${l.id}" style="justify-content:flex-start">${esc(l.label)}</button>`
+    ).join("");
+    const backdrop = el(`
+      <div class="modal-backdrop confirm-backdrop">
+        <div class="modal modal-confirm">
+          <h2>${esc(title)}</h2>
+          <div class="desc" style="margin-bottom:12px">How well do you remember this card now? Bonfire will re-set its schedule accordingly — pick the one that fits.</div>
+          <div class="vlist">${buttons}</div>
+          <div class="actions"><button class="btn btn-tool" id="reset-cancel">Cancel</button></div>
+        </div>
+      </div>
+    `);
+    function done(v) {
+      backdrop.remove();
+      document.removeEventListener("keydown", onKey, true);
+      resolve(v);
+    }
+    function onKey(e) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        done(null);
+      }
+    }
+    backdrop.querySelectorAll(".reset-lvl").forEach((b) =>
+      b.addEventListener("click", () => done(b.dataset.lvl))
+    );
+    backdrop.querySelector("#reset-cancel").addEventListener("click", () => done(null));
+    backdrop.addEventListener("mousedown", (e) => {
+      if (e.target === backdrop) done(null);
+    });
+    document.body.appendChild(backdrop);
+    document.addEventListener("keydown", onKey, true);
+  });
+}
+
 export async function renderStats(container, ctx) {
   let days = [];
   try {
@@ -235,6 +300,7 @@ export async function renderStats(container, ctx) {
   const last7 = sumSince(dayCount, 7);
   const last30 = sumSince(dayCount, 30);
   const weak = weakTags(all);
+  const debt = cardDebt(all);
   const decks = deckMastery(ctx.decks(), all);
   const { pts, count: retCount } = retentionCurve(ctx.state.shards);
   const avgDays = avgDaysToReview(ctx.state.shards);
@@ -304,6 +370,16 @@ export async function renderStats(container, ctx) {
       </div>
 
       <div class="panel">
+        <div class="row" style="align-items:center">
+          <div class="section-title" style="margin:0">Card debt <span class="muted">(${debt.length} card${debt.length === 1 ? "" : "s"} past their scheduled review)</span></div>
+          <div class="spacer"></div>
+          <button class="btn btn-primary mini" id="debt-study-all" ${debt.length ? "" : "disabled"}>Study all</button>
+        </div>
+        <div class="muted" style="margin:6px 0 8px">These cards are overdue — time has passed since SM-2/FSRS said to review them. Bonfire changes nothing on its own: <b>Study all</b> (or per-card <b>Study</b>) to clear the debt (the schedule then continues as if studied on time), or <b>Reset</b> how well you remember a card if you'd rather re-introduce it.</div>
+        <div id="debt-list"></div>
+      </div>
+
+      <div class="panel">
         <div class="section-title">Projected retention — current deck${retCount ? "" : " (no review-enabled cards yet)"}</div>
         <div class="muted" style="margin-bottom:8px">Average chance you'd still recall a card on a given day, from each card's memory strength. ${
           avgDays == null ? "" : `Cards trend review-worthy in ~${avgDays} day(s).`
@@ -341,6 +417,40 @@ export async function renderStats(container, ctx) {
       row.querySelector(".weak-drill").addEventListener("click", () => ctx.weakStudy());
       weakList.appendChild(row);
     });
+  }
+
+  // ---- Card debt list ----
+  const studyAllBtn = root.querySelector("#debt-study-all");
+  if (studyAllBtn) {
+    studyAllBtn.addEventListener("click", () => ctx.studyCards(debt.map((d) => d.s.id)));
+  }
+  const debtList = root.querySelector("#debt-list");
+  if (!debt.length) {
+    debtList.innerHTML = '<div class="muted">✓ No overdue cards — you\'re all caught up.</div>';
+  } else {
+    debt.slice(0, 50).forEach(({ s, days, hours }) => {
+      const overdue = days > 0 ? `${days}d ${hours}h overdue` : `${hours}h overdue`;
+      const row = el(`
+        <div class="list-row">
+          <span class="title">${esc(s.title) || "(untitled)"}</span>
+          <span class="cat">${esc(overdue)}</span>
+          <button class="btn btn-secondary mini debt-study">Study</button>
+          <button class="btn btn-accent mini debt-reset">Reset…</button>
+        </div>
+      `);
+      row.querySelector(".debt-study").addEventListener("click", () => ctx.reviewCard(s.id));
+      row.querySelector(".debt-reset").addEventListener("click", async () => {
+        const level = await resetLevelDialog(`Reset "${(s.title || "untitled").slice(0, 40)}"`);
+        if (!level) return;
+        await ctx.api.resetCardSchedule(s.id, level);
+        ctx.toast("Card schedule reset");
+        ctx.refreshView();
+      });
+      debtList.appendChild(row);
+    });
+    if (debt.length > 50) {
+      debtList.appendChild(el(`<div class="muted" style="padding:6px 8px">+${debt.length - 50} more</div>`));
+    }
   }
 
   const masteryList = root.querySelector("#deck-mastery");

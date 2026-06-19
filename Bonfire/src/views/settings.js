@@ -5,12 +5,15 @@ import { THEMES, FONTS, SCALES, appearance, setAppearance } from "../theme.js";
 import { buildStudyConfigForm, loadConfig, saveConfig } from "./study.js";
 import {
   PRESET_OPTIONS,
-  DEFAULT_DECK_ID,
+  DEBT_DECK_ID,
+  isNativeDeck,
   SR_ALGORITHMS,
   DEFAULT_ALGORITHM,
   SM2_DEFAULTS,
   FSRS_DEFAULTS,
   cardTypeOptions,
+  getDifficulty,
+  SPECIAL_TAGS,
 } from "../constants.js";
 import { loadTemplates, saveTemplates, isBuiltin } from "../templates.js";
 
@@ -46,6 +49,7 @@ export async function renderSettings(container, ctx) {
   const fsrsp = await loadJsonSetting(ctx, "fsrs_params", FSRS_DEFAULTS);
   const vimOn = (await ctx.api.getSetting("editor_vim")) === "true";
   const dailyDeck = (await ctx.api.getSetting("daily_deck")) || "";
+  const hideNative = (await ctx.api.getSetting("hide_native_decks")) === "true";
 
   const sel = (id, items, current) =>
     `<select id="${id}">${items
@@ -56,25 +60,34 @@ export async function renderSettings(container, ctx) {
     <div>
       <h2 style="margin:0 0 14px;font-size:16px">Settings</h2>
 
+      <div class="section-title">Card integrity</div>
+      <div class="panel">
+        <div class="muted" style="margin-bottom:8px">Every card should belong to at least one deck and carry a difficulty. Any that don't are listed here — click <b>Fix</b> to open and correct one. Adding a descriptive <b>topic tag</b> (e.g. <code>networking</code>) is recommended but optional; cards missing one are listed separately as a gentle suggestion.</div>
+        <div id="integrity-list"></div>
+      </div>
+
       <div class="section-title">Appearance</div>
       <div class="panel">
+        <div class="muted" style="margin-bottom:8px"><b>Theme</b> sets the colour palette (used across the whole app, including syntax highlighting and button colours). <b>UI font</b> changes the interface typeface. <b>UI scale</b> zooms the entire interface up or down. Changes apply instantly and are remembered.</div>
         <div class="form-grid">
           <label>Theme</label>${sel("set-theme", THEMES, appearance.theme)}
           <label>UI font</label>${sel("set-font", FONTS, appearance.font)}
           <label>UI scale</label>${sel("set-scale", SCALES, appearance.scale)}
         </div>
-        <div class="muted" style="margin-top:8px"><b>Theme</b> sets the colour palette (used across the whole app, including syntax highlighting and button colours). <b>UI font</b> changes the interface typeface. <b>UI scale</b> zooms the entire interface up or down. Changes apply instantly and are remembered.</div>
       </div>
 
       <div class="section-title">Editor</div>
       <div class="panel">
-        <label class="chk"><input type="checkbox" id="set-vim" ${vimOn ? "checked" : ""}/> VIM mode in the answer editor</label>
-        <div class="muted" style="margin-top:6px">Adds VIM keybindings to the syntax-highlighted code answer editor during study. You can also toggle it while answering a question.</div>
+        <div class="muted" style="margin-bottom:8px">Adds VIM keybindings to the syntax-highlighted code answer editor during study. You can also toggle it while answering a question.</div>
+        <button type="button" class="btn btn-toggle ${vimOn ? "on" : ""}" id="set-vim">VIM mode in the answer editor</button>
       </div>
 
       <div class="section-title">Decks</div>
       <div class="panel">
-        <div class="muted" style="margin-bottom:8px">A deck's preset controls its fields — the <b>Code</b> preset shows the Language field and syntax highlighting; other presets hide them so you can study any subject. Cards in a deleted deck move to the default deck. Star one deck as your <b>daily default</b> — the Ctrl+D quick-start studies it.</div>
+        <div class="muted" style="margin-bottom:8px">A deck's preset controls its fields — the <b>Code</b> preset shows the Language field and syntax highlighting; other presets hide them so you can study any subject. Cards in a deleted deck move to the default deck. Star one deck as your <b>daily default</b> — the Ctrl+D quick-start studies it. The built-in <b>Default</b> and <b>Debt</b> decks (greyed) are required by Bonfire — they can't be renamed or deleted, but you can change their preset or make one your daily default.</div>
+        <div class="row" style="margin-bottom:10px">
+          <button type="button" class="btn btn-toggle ${hideNative ? "on" : ""}" id="toggle-native">Hide built-in decks</button>
+        </div>
         <div id="deck-list"></div>
         <hr style="border:none;border-top:1px solid var(--border);margin:12px 0" />
         <div class="row">
@@ -139,7 +152,13 @@ export async function renderSettings(container, ctx) {
 
   root.querySelector("#study-slot").appendChild(form.node);
 
-  renderDecks(root, ctx, dailyDeck);
+  renderIntegrity(root, ctx);
+  renderDecks(root, ctx, dailyDeck, hideNative);
+  root.querySelector("#toggle-native").addEventListener("click", async (e) => {
+    const on = e.currentTarget.classList.toggle("on");
+    await ctx.api.setSetting("hide_native_decks", on ? "true" : "false");
+    renderDecks(root, ctx, dailyDeck, on);
+  });
   root.querySelector("#add-deck").addEventListener("click", async () => {
     const nameEl = root.querySelector("#new-deck-name");
     const name = nameEl.value.trim();
@@ -156,8 +175,9 @@ export async function renderSettings(container, ctx) {
   root.querySelector("#set-theme").addEventListener("change", (e) => setAppearance("theme", e.target.value));
   root.querySelector("#set-font").addEventListener("change", (e) => setAppearance("font", e.target.value));
   root.querySelector("#set-scale").addEventListener("change", (e) => setAppearance("scale", e.target.value));
-  root.querySelector("#set-vim").addEventListener("change", (e) => {
-    ctx.api.setSetting("editor_vim", e.target.checked ? "true" : "false");
+  root.querySelector("#set-vim").addEventListener("click", (e) => {
+    const on = e.currentTarget.classList.toggle("on");
+    ctx.api.setSetting("editor_vim", on ? "true" : "false");
     ctx.toast("Editor setting saved");
   });
 
@@ -235,19 +255,89 @@ export async function renderSettings(container, ctx) {
   container.appendChild(root);
 }
 
-// Render the editable list of decks (rename, change preset, delete, set daily).
-function renderDecks(root, ctx, dailyDeck = "") {
-  const list = root.querySelector("#deck-list");
-  const decks = ctx.decks();
+// Scan all cards for organization gaps (item 2). HARD issues — no real deck or no
+// difficulty — are listed as errors with a Fix button. Missing a free-form *topic*
+// tag is a SOFT suggestion (item 1, notes-03): grouped separately and de-emphasized,
+// since difficulty is auto-stamped and a descriptive tag is optional.
+function renderIntegrity(root, ctx) {
+  const list = root.querySelector("#integrity-list");
   list.innerHTML = "";
 
+  const hard = []; // { s, issues } — no deck / no difficulty
+  const topicless = []; // cards that are otherwise fine but carry no topic tag
+  ctx.state.allShards.forEach((s) => {
+    const tags = s.tags || [];
+    const issues = [];
+    // A card needs a *real* organizing deck — the auto Debt deck doesn't count.
+    if (!(s.deckIds || []).some((id) => id !== DEBT_DECK_ID)) issues.push("no deck");
+    if (!getDifficulty(tags)) issues.push("no difficulty");
+    if (issues.length) hard.push({ s, issues });
+    // Topic tag = any tag that isn't a reserved keyword tag.
+    if (!tags.some((t) => !SPECIAL_TAGS.has(t))) topicless.push(s);
+  });
+
+  // ---- Hard issues ----
+  if (!hard.length) {
+    list.appendChild(el('<div class="muted">✓ Every card has a deck and a difficulty.</div>'));
+  } else {
+    hard.forEach(({ s, issues }) => {
+      const row = el(`
+        <div class="list-row">
+          <span class="title">${esc(s.title) || "(untitled)"}</span>
+          <span class="cat">${esc(issues.join(", "))}</span>
+          <button class="btn btn-accent mini">Fix</button>
+        </div>
+      `);
+      row.querySelector("button").addEventListener("click", () => ctx.openShard(s.id));
+      list.appendChild(row);
+    });
+  }
+
+  // ---- Soft suggestion: cards with no topic tag ----
+  if (topicless.length) {
+    list.appendChild(
+      el(
+        `<div class="muted-2" style="margin-top:12px;margin-bottom:6px">Suggestion — ${topicless.length} card${
+          topicless.length === 1 ? "" : "s"
+        } ha${topicless.length === 1 ? "s" : "ve"} no topic tag. Adding one (e.g. <code>networking</code>) makes them easier to find and filter, but it's optional.</div>`
+      )
+    );
+    topicless.forEach((s) => {
+      const row = el(`
+        <div class="list-row">
+          <span class="title muted">${esc(s.title) || "(untitled)"}</span>
+          <button class="btn btn-tool mini">Add tag</button>
+        </div>
+      `);
+      row.querySelector("button").addEventListener("click", () => ctx.openShard(s.id));
+      list.appendChild(row);
+    });
+  }
+}
+
+// Render the editable list of decks (rename, change preset, delete, set daily).
+// `hideNative` drops the built-in Default/Debt decks from the list (item 2).
+function renderDecks(root, ctx, dailyDeck = "", hideNative = false) {
+  const list = root.querySelector("#deck-list");
+  let decks = ctx.decks();
+  if (hideNative) decks = decks.filter((d) => !isNativeDeck(d.id));
+  list.innerHTML = "";
+
+  if (!decks.length) {
+    list.appendChild(el('<div class="muted">No user-created decks yet. Add one below.</div>'));
+    return;
+  }
+
   decks.forEach((d) => {
-    const isDefault = d.id === DEFAULT_DECK_ID;
+    const isDebt = d.id === DEBT_DECK_ID;
+    // Native decks (Default/Debt) ship with Bonfire: greyed, no rename, no delete.
+    const isProtected = isNativeDeck(d.id);
     const isDaily = d.id === dailyDeck;
-    const count = ctx.state.allShards.filter((s) => s.deckId === d.id).length;
+    const count = ctx.state.allShards.filter((s) => (s.deckIds || []).includes(d.id)).length;
     const row = el(`
-      <div class="list-row">
+      <div class="list-row ${isProtected ? "native-deck" : ""}">
         <span class="title">${esc(d.name) || "(unnamed)"}</span>
+        ${isProtected ? `<span class="badge" title="Built-in deck — required by Bonfire, can't be renamed or deleted">${isDebt ? "auto" : "built-in"}</span>` : ""}
         <span class="cat">${count} card${count === 1 ? "" : "s"}</span>
         ${
           isDaily
@@ -255,8 +345,8 @@ function renderDecks(root, ctx, dailyDeck = "") {
             : '<button class="btn btn-secondary mini deck-daily" title="Make this the Ctrl+D quick-start deck">Set daily</button>'
         }
         <select class="deck-preset">${presetOptionsHtml(d.preset)}</select>
-        <button class="btn btn-accent mini deck-rename">Rename</button>
-        ${isDefault ? '<span class="muted">default</span>' : '<button class="btn btn-danger mini deck-del">Delete</button>'}
+        ${isProtected ? "" : '<button class="btn btn-accent mini deck-rename">Rename</button>'}
+        ${isProtected ? "" : '<button class="btn btn-danger mini deck-del">Delete</button>'}
       </div>
     `);
 
@@ -273,14 +363,17 @@ function renderDecks(root, ctx, dailyDeck = "") {
         ctx.navigate("settings");
       });
     }
-    row.querySelector(".deck-rename").addEventListener("click", async () => {
-      const name = prompt("Rename deck:", d.name);
-      if (name && name.trim() && name.trim() !== d.name) {
-        await ctx.api.saveDeck({ ...d, name: name.trim() });
-        ctx.toast("Deck renamed");
-        ctx.navigate("settings");
-      }
-    });
+    const rename = row.querySelector(".deck-rename");
+    if (rename) {
+      rename.addEventListener("click", async () => {
+        const name = prompt("Rename deck:", d.name);
+        if (name && name.trim() && name.trim() !== d.name) {
+          await ctx.api.saveDeck({ ...d, name: name.trim() });
+          ctx.toast("Deck renamed");
+          ctx.navigate("settings");
+        }
+      });
+    }
     const del = row.querySelector(".deck-del");
     if (del) {
       del.addEventListener("click", async () => {

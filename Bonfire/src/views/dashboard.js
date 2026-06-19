@@ -2,6 +2,14 @@
 import { el, esc, langBadge, famBadge, catBadge, isDue } from "../dom.js";
 import { langColor } from "../constants.js";
 import { exportVault, importVault } from "../data.js";
+import {
+  bulkDelete,
+  bulkAddToDeck,
+  bulkRemoveFromDeck,
+  openBulkMenu,
+  fieldMenuItems,
+  mediaMenuItems,
+} from "../components/bulkBar.js";
 
 export function renderDashboard(container, ctx) {
   const shards = ctx.state.shards;
@@ -17,6 +25,14 @@ export function renderDashboard(container, ctx) {
   const langEntries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
 
   const recent = shards.slice(0, 10); // already modified_at DESC from backend
+
+  // Multi-select for bulk actions (item 1), shared by the due + recent lists.
+  const selected = new Set();
+  // Shift+Click range selection (item 5). The anchor remembers which list it was set
+  // in (`ids` array) so a range only spans within that one list. `checkboxes` maps a
+  // card id to its rendered checkbox(es) so a range op can repaint them in place.
+  let anchor = null; // { ids, idx }
+  const checkboxes = new Map(); // id -> checkbox element[]
 
   const root = el(`
     <div>
@@ -56,9 +72,16 @@ export function renderDashboard(container, ctx) {
       </div>
 
       <div class="panel">
-        <div class="row">
+        <div class="row" style="flex-wrap:wrap;row-gap:6px">
           <div class="section-title" style="margin:0">Due for Review</div>
           <div class="spacer"></div>
+          <span class="muted" id="sel-count" style="margin-right:4px"></span>
+          <button class="btn btn-accent mini" id="bulk-edit" disabled>Edit</button>
+          <button class="btn btn-tool mini" id="bulk-fields" disabled>Edit field ▾</button>
+          <button class="btn btn-tool mini" id="bulk-media" disabled>Add media ▾</button>
+          <button class="btn btn-tool mini" id="bulk-deck-add" disabled>Add to deck</button>
+          <button class="btn btn-tool mini" id="bulk-deck-rm" disabled>Remove from deck</button>
+          <button class="btn btn-danger mini" id="bulk-del" disabled>Delete</button>
           <button class="btn btn-tool" id="weak">Weak spots</button>
           <button class="btn btn-tool" id="daily">Daily (Ctrl+D)</button>
           <button class="btn btn-primary" id="start-study">Start Study</button>
@@ -73,12 +96,96 @@ export function renderDashboard(container, ctx) {
     </div>
   `);
 
+  // ---- Bulk toolbar (lives in the Due-for-Review row, left of "Weak spots";
+  // always visible but greyed out until cards are selected) ----
+  const selCount = root.querySelector("#sel-count");
+  const bulkEdit = root.querySelector("#bulk-edit");
+  const bulkFields = root.querySelector("#bulk-fields");
+  const bulkMedia = root.querySelector("#bulk-media");
+  const bulkDeckAdd = root.querySelector("#bulk-deck-add");
+  const bulkDeckRm = root.querySelector("#bulk-deck-rm");
+  const bulkDel = root.querySelector("#bulk-del");
+
+  function updateBulk() {
+    const n = selected.size;
+    selCount.textContent = n ? `${n} selected` : "";
+    [bulkFields, bulkMedia, bulkDeckAdd, bulkDeckRm, bulkDel].forEach((b) => (b.disabled = n === 0));
+    bulkEdit.disabled = n !== 1;
+  }
+  async function runBulk(fn) {
+    const ids = [...selected];
+    if (!ids.length) return;
+    const ok = await fn(ctx, ids);
+    if (ok) {
+      selected.clear();
+      ctx.refreshView();
+    }
+  }
+  bulkDel.addEventListener("click", () => runBulk(bulkDelete));
+  bulkDeckAdd.addEventListener("click", () => runBulk(bulkAddToDeck));
+  bulkDeckRm.addEventListener("click", () => runBulk(bulkRemoveFromDeck));
+  bulkFields.addEventListener("click", () => openBulkMenu(bulkFields, fieldMenuItems(runBulk)));
+  bulkMedia.addEventListener("click", () => openBulkMenu(bulkMedia, mediaMenuItems(runBulk)));
+  bulkEdit.addEventListener("click", () => {
+    const id = [...selected][0];
+    if (id) ctx.openShard(id);
+  });
+
+  function shardRow(s, listIds) {
+    const row = el(`
+      <div class="list-row">
+        <input type="checkbox" class="row-sel" ${selected.has(s.id) ? "checked" : ""} />
+        ${langBadge(s.language)}
+        <span class="title">${esc(s.title) || "(untitled)"}</span>
+        ${isDue(s) ? '<span class="review-dot" title="Due for review today">●</span>' : ""}
+        ${catBadge(s.category)}
+        ${famBadge(s.familiarity)}
+        <button class="btn mini review-btn" title="Review this card (no answer shown first)">Review</button>
+      </div>
+    `);
+    const cb = row.querySelector(".row-sel");
+    if (!checkboxes.has(s.id)) checkboxes.set(s.id, []);
+    checkboxes.get(s.id).push(cb);
+    // Selection on click (carries shiftKey); Shift+Click selects the range within
+    // this list (item 5).
+    cb.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const idx = listIds.indexOf(s.id);
+      if (e.shiftKey && anchor && anchor.ids === listIds && idx !== -1) {
+        const lo = Math.min(anchor.idx, idx);
+        const hi = Math.max(anchor.idx, idx);
+        const on = cb.checked;
+        for (let i = lo; i <= hi; i++) {
+          const id = listIds[i];
+          if (on) selected.add(id);
+          else selected.delete(id);
+          (checkboxes.get(id) || []).forEach((box) => (box.checked = on));
+        }
+        updateBulk();
+        return;
+      }
+      if (cb.checked) selected.add(s.id);
+      else selected.delete(s.id);
+      anchor = { ids: listIds, idx };
+      updateBulk();
+    });
+    row.addEventListener("click", () => ctx.openShard(s.id));
+    // Single-card review without opening the editor (which would reveal the answer first).
+    row.querySelector(".review-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      ctx.reviewCard(s.id);
+    });
+    return row;
+  }
+
   // Due list (max 5 + "more" hint).
   const dueList = root.querySelector("#due-list");
   if (!due.length) {
     dueList.innerHTML = '<div class="muted">Nothing due. Nice.</div>';
   } else {
-    due.slice(0, 5).forEach((s) => dueList.appendChild(shardRow(s, ctx)));
+    const dueShown = due.slice(0, 5);
+    const dueIds = dueShown.map((s) => s.id);
+    dueShown.forEach((s) => dueList.appendChild(shardRow(s, dueIds)));
     if (due.length > 5) {
       dueList.appendChild(el(`<div class="muted" style="padding:6px 8px">+${due.length - 5} more</div>`));
     }
@@ -87,13 +194,15 @@ export function renderDashboard(container, ctx) {
   // 7-day review forecast (current deck). Day 0 includes anything overdue.
   const forecastEl = root.querySelector("#forecast");
   const days = buildForecast(shards);
-  const max = Math.max(1, ...days.map((d) => d.count));
   forecastEl.innerHTML = "";
   days.forEach((d) => {
+    // Bar width is the day's due count against a FIXED ceiling of 100 (50 due =
+    // half full, 100+ = full) — not relative to the busiest day. Brightness is a
+    // separate axis: dueLevel() buckets the count 0–4 (styled per data-level).
     const row = el(`
       <div class="forecast-row">
         <span class="forecast-label">${esc(d.label)}</span>
-        <span class="forecast-bar-track"><span class="forecast-bar" data-level="${dueLevel(d.count)}" style="width:${(d.count / max) * 100}%"></span></span>
+        <span class="forecast-bar-track"><span class="forecast-bar" data-level="${dueLevel(d.count)}" style="width:${Math.min(100, d.count)}%"></span></span>
         <span class="forecast-count">${d.count}</span>
       </div>
     `);
@@ -105,7 +214,8 @@ export function renderDashboard(container, ctx) {
   if (!recent.length) {
     recentList.innerHTML = '<div class="muted">No shards yet — press Ctrl+N to capture one.</div>';
   } else {
-    recent.forEach((s) => recentList.appendChild(shardRow(s, ctx)));
+    const recentIds = recent.map((s) => s.id);
+    recent.forEach((s) => recentList.appendChild(shardRow(s, recentIds)));
   }
 
   root.querySelector("#start-study").addEventListener("click", () => ctx.startStudy());
@@ -156,24 +266,4 @@ function buildForecast(shards) {
     out.push({ label, count });
   }
   return out;
-}
-
-function shardRow(s, ctx) {
-  const row = el(`
-    <div class="list-row">
-      ${langBadge(s.language)}
-      <span class="title">${esc(s.title) || "(untitled)"}</span>
-      ${s.reviewEnabled ? '<span class="review-dot">●</span>' : ""}
-      ${catBadge(s.category)}
-      ${famBadge(s.familiarity)}
-      <button class="btn mini review-btn" title="Review this card (no answer shown first)">Review</button>
-    </div>
-  `);
-  row.addEventListener("click", () => ctx.openShard(s.id));
-  // Single-card review without opening the editor (which would reveal the answer first).
-  row.querySelector(".review-btn").addEventListener("click", (e) => {
-    e.stopPropagation();
-    ctx.reviewCard(s.id);
-  });
-  return row;
 }

@@ -1,6 +1,7 @@
 // Command palette (Ctrl+P): fuzzy search over actions, deck switches, view
 // navigation, and every card (open by title, switching deck if needed).
 import { el, esc } from "../dom.js";
+import { ALL_DECKS } from "../constants.js";
 
 function buildItems(ctx) {
   const items = [];
@@ -22,12 +23,15 @@ function buildItems(ctx) {
     ["settings", "Settings"],
   ].forEach(([v, label]) => add("Go to", label, () => ctx.navigate(v)));
 
+  add("Deck", "Switch to: All decks", () => ctx.setDeck(ALL_DECKS));
   ctx.decks().forEach((d) => add("Deck", `Switch to: ${d.name}`, () => ctx.setDeck(d.id)));
 
-  // Every card across decks; opening one switches to its deck first if needed.
+  // Every card across decks; opening one switches to one of its decks first if the
+  // card isn't in the current deck (a card can now belong to several).
   ctx.state.allShards.forEach((s) =>
     add("Card", s.title || "(untitled)", async () => {
-      if (s.deckId && s.deckId !== ctx.currentDeckId()) await ctx.setDeck(s.deckId);
+      const decks = s.deckIds || [];
+      if (decks.length && !decks.includes(ctx.currentDeckId())) await ctx.setDeck(decks[0]);
       ctx.openShard(s.id);
     })
   );
