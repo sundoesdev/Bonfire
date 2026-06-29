@@ -1,0 +1,83 @@
+<h2 style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Hearth Study session redesign: a centered focus field with dimmed chrome, a themed code editor with a gutter and placeholder, and a warm non-shaming reveal-and-grade beat.</h2>
+<style>
+.hv{width:100%;border-radius:18px;overflow:hidden;background:#F1E9DA;color:#2C2620;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:grid;grid-template-columns:122px 1fr;min-height:560px}
+.hv *{box-sizing:border-box}
+.hv-side{background:#F8F2E7;border-right:.5px solid #ECE1CF;display:flex;flex-direction:column;gap:3px;padding:14px 10px;opacity:.4}
+.hv-brand{display:flex;align-items:center;gap:6px;font-size:15px;font-weight:500;padding:2px 5px 11px;color:#1F1A15;font-family:Georgia,serif}
+.hv-deck{font-size:9.5px;letter-spacing:.4px;text-transform:uppercase;color:#95876F;padding:0 5px 3px}
+.hv-deckbox{display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-radius:9px;background:#FFFDF8;border:.5px solid #ECE1CF;font-size:11.5px;color:#6B6051;margin-bottom:9px}
+.hv-nav{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:9px;font-size:12px;color:#6B6051}
+.hv-nav i{font-size:15px}
+.hv-nav.on{color:#9A3F22;font-weight:500}
+.hv-new{margin-top:auto;display:flex;align-items:center;justify-content:center;gap:5px;padding:8px;border-radius:10px;font-size:12px;font-weight:500;color:#fff;background:#C75B39}
+.hv-main{padding:22px 16px;display:flex;flex-direction:column;align-items:center;gap:14px;min-width:0}
+.hv-prog{font-size:12px;color:#95876F;align-self:center}
+.hv-card{background:#FFFDF8;border:.5px solid #ECE1CF;border-radius:16px;padding:20px;width:100%;max-width:470px}
+.hv-meta{display:flex;align-items:center;gap:9px;margin-bottom:9px}
+.hv-dot{width:8px;height:8px;border-radius:50%}
+.hv-lang{font-size:11.5px;color:#6B6051}
+.hv-diff{font-size:10.5px;color:#5E7A4A;background:#E3EBE0;border-radius:999px;padding:2px 9px}
+.hv-title{font-size:20px;font-weight:500;color:#26201A;font-family:Georgia,serif;margin:0}
+.hv-q{font-size:13px;color:#6B6051;margin:5px 0 13px;line-height:1.5}
+.hv-div{height:.5px;background:#ECE1CF;margin:0 0 13px}
+.hv-vim{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.hv-sw{width:32px;height:19px;border-radius:999px;background:#C75B39;position:relative}
+.hv-sw::after{content:"";position:absolute;top:2px;left:15px;width:15px;height:15px;border-radius:50%;background:#fff}
+.hv-vim span{font-size:12px;color:#6B6051}
+.hv-editor{display:flex;background:#F6EFE2;border:.5px solid #E2D6C2;border-radius:11px;overflow:hidden;height:120px}
+.hv-gutter{padding:11px 9px;color:#C2B5A0;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;text-align:right;background:#F0E7D7;line-height:1.7;user-select:none}
+.hv-codearea{padding:11px 12px;color:#C2B5A0;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-style:italic;line-height:1.7}
+.hv-submit{display:flex;align-items:center;justify-content:center;gap:8px;padding:11px;border-radius:11px;background:#C75B39;color:#fff;font-size:13px;font-weight:500;margin-top:12px}
+.hv-submit .kbd{font-size:10.5px;background:rgba(255,255,255,.22);border-radius:5px;padding:2px 6px;font-family:ui-monospace,monospace}
+.hv-foot{display:flex;align-items:center;gap:10px;width:100%;max-width:470px}
+.hv-fbtn{font-size:12px;padding:7px 13px;border-radius:9px;border:.5px solid #E2D6C2;background:#FFFDF8;color:#6B6051}
+.hv-grade{width:100%;max-width:470px;margin-top:4px}
+.hv-gradehint{font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:#95876F;font-weight:500;text-align:center;margin:0 0 9px}
+.hv-grades{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.hv-g{display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 6px;border-radius:11px;border:.5px solid #E2D6C2;background:#FFFDF8;font-size:12px;font-weight:500}
+.hv-g .k{font-size:10px;border-radius:5px;padding:1px 6px;font-family:ui-monospace,monospace}
+</style>
+<div class="hv">
+  <aside class="hv-side">
+    <div class="hv-brand"><i class="ti ti-flame" style="color:#C75B39" aria-hidden="true"></i>Hearth</div>
+    <div class="hv-deck">Deck</div>
+    <div class="hv-deckbox">Default <i class="ti ti-chevron-down" aria-hidden="true"></i></div>
+    <div class="hv-nav"><i class="ti ti-home" aria-hidden="true"></i>Dashboard</div>
+    <div class="hv-nav"><i class="ti ti-book" aria-hidden="true"></i>Library</div>
+    <div class="hv-nav on"><i class="ti ti-player-play" aria-hidden="true"></i>Study</div>
+    <div class="hv-nav"><i class="ti ti-chart-bar" aria-hidden="true"></i>Stats</div>
+    <div class="hv-nav"><i class="ti ti-tag" aria-hidden="true"></i>Tags</div>
+    <div class="hv-nav"><i class="ti ti-settings" aria-hidden="true"></i>Settings</div>
+    <div class="hv-new"><i class="ti ti-plus" aria-hidden="true"></i>New Shard</div>
+  </aside>
+  <main class="hv-main">
+    <div class="hv-prog">1 of 38</div>
+    <div class="hv-card">
+      <div class="hv-meta"><span class="hv-dot" style="background:#C75B39"></span><span class="hv-lang">WebDev (HTML/CSS/JS)</span><span class="hv-diff">beginner</span></div>
+      <p class="hv-title">Anchor Element</p>
+      <p class="hv-q">Write a one-line anchor element with an attribute containing a link.</p>
+      <div class="hv-div"></div>
+      <div class="hv-vim"><span class="hv-sw" role="switch" aria-checked="true" aria-label="VIM mode"></span><span>VIM mode</span></div>
+      <div class="hv-editor">
+        <div class="hv-gutter">1<br>2<br>3</div>
+        <div class="hv-codearea">Type your answer…</div>
+      </div>
+      <div class="hv-submit">Submit <span class="kbd">Ctrl + Enter</span></div>
+    </div>
+    <div class="hv-foot">
+      <span class="hv-fbtn">Skip</span>
+      <span class="hv-fbtn">End session</span>
+      <span style="flex:1"></span>
+      <span class="hv-fbtn">Queue · 38</span>
+    </div>
+    <div class="hv-grade">
+      <p class="hv-gradehint">After you submit — how well did it come back?</p>
+      <div class="hv-grades">
+        <span class="hv-g" style="color:#9A3324"><span class="k" style="background:#F4DCD7;color:#9A3324">1</span>Forgot</span>
+        <span class="hv-g" style="color:#8A5A1E"><span class="k" style="background:#F0E2C8;color:#8A5A1E">2</span>Hard</span>
+        <span class="hv-g" style="color:#4F6E3F"><span class="k" style="background:#E3EBD8;color:#4F6E3F">3</span>Good</span>
+        <span class="hv-g" style="color:#2F6E5E"><span class="k" style="background:#DCEBE4;color:#2F6E5E">4</span>Easy</span>
+      </div>
+    </div>
+  </main>
+</div>

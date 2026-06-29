@@ -1,7 +1,7 @@
 // Settings: decks, study-session defaults, appearance (theme/font/scale), and data tools.
 import { el, esc, enableTab } from "../dom.js";
 import { exportVault, importVault } from "../data.js";
-import { THEMES, FONTS, SCALES, appearance, setAppearance } from "../theme.js";
+import { FONTS, SCALES, appearance, setAppearance } from "../theme.js";
 import { buildStudyConfigForm, loadConfig, saveConfig } from "./study.js";
 import {
   PRESET_OPTIONS,
@@ -50,6 +50,7 @@ export async function renderSettings(container, ctx) {
   const vimOn = (await ctx.api.getSetting("editor_vim")) === "true";
   const dailyDeck = (await ctx.api.getSetting("daily_deck")) || "";
   const hideNative = (await ctx.api.getSetting("hide_native_decks")) === "true";
+  const savedTab = (await ctx.api.getSetting("settings_tab")) || "appearance";
 
   const sel = (id, items, current) =>
     `<select id="${id}">${items
@@ -58,19 +59,36 @@ export async function renderSettings(container, ctx) {
 
   const root = el(`
     <div>
-      <h2 style="margin:0 0 14px;font-size:16px">Settings</h2>
+      <div class="page-greeting" style="margin-bottom:14px">Settings</div>
 
+      <div class="settings-tabs" role="tablist">
+        <button type="button" class="settings-tab-btn active" data-tab="appearance"><i class="ti ti-palette"></i>Appearance</button>
+        <button type="button" class="settings-tab-btn" data-tab="study"><i class="ti ti-player-play"></i>Study</button>
+        <button type="button" class="settings-tab-btn" data-tab="decks"><i class="ti ti-stack-2"></i>Decks</button>
+        <button type="button" class="settings-tab-btn" data-tab="scheduling"><i class="ti ti-clock"></i>Scheduling</button>
+        <button type="button" class="settings-tab-btn" data-tab="templates"><i class="ti ti-template"></i>Templates</button>
+        <button type="button" class="settings-tab-btn" data-tab="data"><i class="ti ti-database"></i>Data</button>
+        <button type="button" class="settings-tab-btn" data-tab="integrity"><i class="ti ti-shield-check"></i>Integrity</button>
+      </div>
+
+      <section class="settings-tab" data-tab="integrity">
       <div class="section-title">Card integrity</div>
       <div class="panel">
         <div class="muted" style="margin-bottom:8px">Every card should belong to at least one deck and carry a difficulty. Any that don't are listed here — click <b>Fix</b> to open and correct one. Adding a descriptive <b>topic tag</b> (e.g. <code>networking</code>) is recommended but optional; cards missing one are listed separately as a gentle suggestion.</div>
         <div id="integrity-list"></div>
       </div>
+      </section>
 
+      <section class="settings-tab active" data-tab="appearance">
       <div class="section-title">Appearance</div>
       <div class="panel">
-        <div class="muted" style="margin-bottom:8px"><b>Theme</b> sets the colour palette (used across the whole app, including syntax highlighting and button colours). <b>UI font</b> changes the interface typeface. <b>UI scale</b> zooms the entire interface up or down. Changes apply instantly and are remembered.</div>
+        <div class="muted" style="margin-bottom:8px"><b>Theme</b> sets the colour palette — a warm <b>Light</b> (cream &amp; ember) or <b>Dark</b> (coal &amp; ember). It applies across the whole app, including syntax highlighting. <b>UI font</b> changes the interface typeface (headings always use the brand serif). <b>UI scale</b> zooms the entire interface. Changes apply instantly and are remembered.</div>
         <div class="form-grid">
-          <label>Theme</label>${sel("set-theme", THEMES, appearance.theme)}
+          <label>Theme</label>
+          <div class="theme-toggle" id="set-theme">
+            <button type="button" class="theme-swatch ${appearance.theme === "dark" ? "" : "on"}" data-theme="light"><span class="theme-chip light"></span>Light</button>
+            <button type="button" class="theme-swatch ${appearance.theme === "dark" ? "on" : ""}" data-theme="dark"><span class="theme-chip dark"></span>Dark</button>
+          </div>
           <label>UI font</label>${sel("set-font", FONTS, appearance.font)}
           <label>UI scale</label>${sel("set-scale", SCALES, appearance.scale)}
         </div>
@@ -81,10 +99,12 @@ export async function renderSettings(container, ctx) {
         <div class="muted" style="margin-bottom:8px">Adds VIM keybindings to the syntax-highlighted code answer editor during study. You can also toggle it while answering a question.</div>
         <button type="button" class="btn btn-toggle ${vimOn ? "on" : ""}" id="set-vim">VIM mode in the answer editor</button>
       </div>
+      </section>
 
+      <section class="settings-tab" data-tab="decks">
       <div class="section-title">Decks</div>
       <div class="panel">
-        <div class="muted" style="margin-bottom:8px">A deck's preset controls its fields — the <b>Code</b> preset shows the Language field and syntax highlighting; other presets hide them so you can study any subject. Cards in a deleted deck move to the default deck. Star one deck as your <b>daily default</b> — the Ctrl+D quick-start studies it. The built-in <b>Default</b> and <b>Debt</b> decks (greyed) are required by Bonfire — they can't be renamed or deleted, but you can change their preset or make one your daily default.</div>
+        <div class="muted" style="margin-bottom:8px">A deck's preset controls its fields — the <b>Code</b> preset shows the Language field and syntax highlighting; other presets hide them so you can study any subject. Cards in a deleted deck move to the default deck. Star one deck as your <b>daily default</b> — the Ctrl+D quick-start studies it. The built-in <b>Default</b> and <b>Debt</b> decks (greyed) are required by Hearth — they can't be renamed or deleted, but you can change their preset or make one your daily default.</div>
         <div class="row" style="margin-bottom:10px">
           <button type="button" class="btn btn-toggle ${hideNative ? "on" : ""}" id="toggle-native">Hide built-in decks</button>
         </div>
@@ -96,7 +116,9 @@ export async function renderSettings(container, ctx) {
           <button class="btn btn-primary" id="add-deck">Add deck</button>
         </div>
       </div>
+      </section>
 
+      <section class="settings-tab" data-tab="scheduling">
       <div class="section-title">Spaced repetition</div>
       <div class="panel">
         <div class="muted" style="margin-bottom:8px">The scheduling algorithm applies to every deck. <b>SM-2</b> is the classic SuperMemo scheme; <b>FSRS</b> is a modern memory model that adapts intervals from a stability/difficulty estimate per card.</div>
@@ -117,7 +139,9 @@ export async function renderSettings(container, ctx) {
           <button class="btn btn-tool" id="reset-sr">Reset to defaults</button>
         </div>
       </div>
+      </section>
 
+      <section class="settings-tab" data-tab="templates">
       <div class="section-title">Card templates</div>
       <div class="panel">
         <div class="muted" style="margin-bottom:8px">Reusable field presets for fast authoring. Pick one from the <b>Template…</b> menu in the editor or quick-capture. Built-in templates can't be edited.</div>
@@ -125,14 +149,18 @@ export async function renderSettings(container, ctx) {
         <hr style="border:none;border-top:1px solid var(--border);margin:12px 0" />
         <button class="btn btn-primary" id="add-template">Add template…</button>
       </div>
+      </section>
 
+      <section class="settings-tab" data-tab="study">
       <div class="section-title">Study session defaults</div>
       <div class="panel" style="margin-bottom:8px;display:flex;flex-direction:column;gap:8px">
         <div class="muted">Saves the session limits and filters set below as your defaults. The daily quick-start (Ctrl+D) then launches straight into a session using these settings — studying your daily-default deck (set above) — without asking you to configure it each time. The Study screen shows a trimmed version of these controls; the full set (daily caps, language &amp; tag filters, queue preview) lives here.</div>
         <div><button class="btn btn-primary" id="save-study">Save study defaults</button></div>
       </div>
       <div id="study-slot"></div>
+      </section>
 
+      <section class="settings-tab" data-tab="data">
       <div class="section-title" style="margin-top:6px">Data</div>
       <div class="panel">
         <div class="muted" style="margin-bottom:8px"><b>Export</b> writes every card, deck, and your full review history to a single JSON file (your backup — attachments are embedded, so the file can get large). <b>Import</b> loads cards and decks from such a file; review history is only restored into an empty log, so re-importing won't double-count your stats.</div>
@@ -147,6 +175,7 @@ export async function renderSettings(container, ctx) {
         <div class="muted" style="margin-bottom:6px">Delete all cards permanently removes every card (across all decks).</div>
         <button class="btn btn-danger" id="delete-all">Delete all cards…</button>
       </div>
+      </section>
     </div>
   `);
 
@@ -172,7 +201,12 @@ export async function renderSettings(container, ctx) {
   });
 
   // Appearance handlers (apply + persist immediately).
-  root.querySelector("#set-theme").addEventListener("change", (e) => setAppearance("theme", e.target.value));
+  root.querySelectorAll("#set-theme .theme-swatch").forEach((b) =>
+    b.addEventListener("click", () => {
+      root.querySelectorAll("#set-theme .theme-swatch").forEach((x) => x.classList.toggle("on", x === b));
+      setAppearance("theme", b.dataset.theme);
+    })
+  );
   root.querySelector("#set-font").addEventListener("change", (e) => setAppearance("font", e.target.value));
   root.querySelector("#set-scale").addEventListener("change", (e) => setAppearance("scale", e.target.value));
   root.querySelector("#set-vim").addEventListener("click", (e) => {
@@ -250,6 +284,19 @@ export async function renderSettings(container, ctx) {
 
   root.querySelector("#wipe-stats").addEventListener("click", () => confirmWipeStats(ctx));
   root.querySelector("#delete-all").addEventListener("click", () => confirmDeleteAll(ctx));
+
+  // Tab switching: only one group is visible at a time. Every control stays in the
+  // DOM (just inside a hidden section), so the querySelector-wired handlers above
+  // keep working regardless of which tab is active.
+  const tabBtns = [...root.querySelectorAll(".settings-tab-btn")];
+  const tabSecs = [...root.querySelectorAll(".settings-tab")];
+  function showTab(name) {
+    tabBtns.forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+    tabSecs.forEach((s) => s.classList.toggle("active", s.dataset.tab === name));
+    ctx.api.setSetting("settings_tab", name).catch(() => {});
+  }
+  tabBtns.forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+  showTab(tabBtns.some((b) => b.dataset.tab === savedTab) ? savedTab : "appearance");
 
   container.innerHTML = "";
   container.appendChild(root);
@@ -337,7 +384,7 @@ function renderDecks(root, ctx, dailyDeck = "", hideNative = false) {
     const row = el(`
       <div class="list-row ${isProtected ? "native-deck" : ""}">
         <span class="title">${esc(d.name) || "(unnamed)"}</span>
-        ${isProtected ? `<span class="badge" title="Built-in deck — required by Bonfire, can't be renamed or deleted">${isDebt ? "auto" : "built-in"}</span>` : ""}
+        ${isProtected ? `<span class="badge" title="Built-in deck — required by Hearth, can't be renamed or deleted">${isDebt ? "auto" : "built-in"}</span>` : ""}
         <span class="cat">${count} card${count === 1 ? "" : "s"}</span>
         ${
           isDaily

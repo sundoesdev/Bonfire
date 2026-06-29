@@ -1,8 +1,8 @@
 // Stats: a GitHub-style year heatmap of study activity, streaks/totals, the
 // topics you're weakest in, per-deck mastery, and a projected-retention curve.
 // Everything is computed in the frontend from review_history + all shards.
-import { el, esc } from "../dom.js";
-import { SPECIAL_TAGS, difficultyColor } from "../constants.js";
+import { el, esc, progressRing } from "../dom.js";
+import { SPECIAL_TAGS } from "../constants.js";
 
 const FAM_RANK = { shaky: 0, fresh: 1, solid: 2, mastered: 3 };
 
@@ -250,7 +250,7 @@ function resetLevelDialog(title) {
       <div class="modal-backdrop confirm-backdrop">
         <div class="modal modal-confirm">
           <h2>${esc(title)}</h2>
-          <div class="desc" style="margin-bottom:12px">How well do you remember this card now? Bonfire will re-set its schedule accordingly — pick the one that fits.</div>
+          <div class="desc" style="margin-bottom:12px">How well do you remember this card now? Hearth will re-set its schedule accordingly — pick the one that fits.</div>
           <div class="vlist">${buttons}</div>
           <div class="actions"><button class="btn btn-tool" id="reset-cancel">Cancel</button></div>
         </div>
@@ -334,9 +334,7 @@ export async function renderStats(container, ctx) {
 
   const root = el(`
     <div>
-      <div class="row" style="margin-bottom:14px">
-        <h2 style="margin:0;font-size:16px">Study stats</h2>
-      </div>
+      <div class="page-greeting" style="margin-bottom:14px">Study stats</div>
 
       <div class="stats">
         <div class="stat-card"><div class="stat-num">${current}</div><div class="stat-label">Current streak</div></div>
@@ -375,7 +373,7 @@ export async function renderStats(container, ctx) {
           <div class="spacer"></div>
           <button class="btn btn-primary mini" id="debt-study-all" ${debt.length ? "" : "disabled"}>Study all</button>
         </div>
-        <div class="muted" style="margin:6px 0 8px">These cards are overdue — time has passed since SM-2/FSRS said to review them. Bonfire changes nothing on its own: <b>Study all</b> (or per-card <b>Study</b>) to clear the debt (the schedule then continues as if studied on time), or <b>Reset</b> how well you remember a card if you'd rather re-introduce it.</div>
+        <div class="muted" style="margin:6px 0 8px">A few shards have cooled — time has passed since they were due. Nothing's lost, and nothing changes on its own. Review when you're ready: <b>Study all</b> (or per-card <b>Study</b>) brings them back warm (the schedule continues as if studied on time), or <b>Reset</b> how well you remember a card to re-introduce it gently.</div>
         <div id="debt-list"></div>
       </div>
 
@@ -394,7 +392,7 @@ export async function renderStats(container, ctx) {
 
       <div class="panel">
         <div class="section-title">Deck mastery</div>
-        <div id="deck-mastery"></div>
+        <div id="deck-mastery" class="mastery-rings"></div>
       </div>
     </div>
   `);
@@ -407,7 +405,7 @@ export async function renderStats(container, ctx) {
       const pct = Math.round((w.avgFam / 3) * 100);
       const row = el(`
         <div class="list-row">
-          <span class="badge" style="background:${difficultyColor("advanced")}">#${esc(w.tag)}</span>
+          <span class="lang"><span class="lang-dot" style="--dot:var(--sage)"></span>#${esc(w.tag)}</span>
           <span class="cat">${w.count} card${w.count === 1 ? "" : "s"}</span>
           <span class="mastery-track"><span class="mastery-fill" style="width:${pct}%"></span></span>
           <span class="muted">${pct}% familiar${w.lapses ? ` · ${w.lapses} lapse${w.lapses === 1 ? "" : "s"}` : ""}</span>
@@ -426,7 +424,7 @@ export async function renderStats(container, ctx) {
   }
   const debtList = root.querySelector("#debt-list");
   if (!debt.length) {
-    debtList.innerHTML = '<div class="muted">✓ No overdue cards — you\'re all caught up.</div>';
+    debtList.innerHTML = '<div class="muted">All caught up — nothing has cooled. ✓</div>';
   } else {
     debt.slice(0, 50).forEach(({ s, days, hours }) => {
       const overdue = days > 0 ? `${days}d ${hours}h overdue` : `${hours}h overdue`;
@@ -460,11 +458,9 @@ export async function renderStats(container, ctx) {
     decks.forEach((d) => {
       masteryList.appendChild(
         el(`
-        <div class="list-row">
-          <span class="title">${esc(d.name)}</span>
-          <span class="cat">${d.count} card${d.count === 1 ? "" : "s"}</span>
-          <span class="mastery-track"><span class="mastery-fill" style="width:${d.mastery}%"></span></span>
-          <span class="muted">${d.mastery}%</span>
+        <div class="mastery-ring-item">
+          ${progressRing(d.mastery, d.name, 84)}
+          <div class="muted">${d.count} card${d.count === 1 ? "" : "s"}</div>
         </div>
       `)
       );

@@ -1,0 +1,98 @@
+<h2 style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Hearth Study setup redesign: a tidy session form with segmented controls and toggle chips beside a live session-preview card with the primary build-queue action.</h2>
+<style>
+.hv{width:100%;border-radius:18px;overflow:hidden;background:#F1E9DA;color:#2C2620;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:grid;grid-template-columns:122px 1fr;min-height:540px}
+.hv *{box-sizing:border-box}
+.hv-side{background:#F8F2E7;border-right:.5px solid #ECE1CF;display:flex;flex-direction:column;gap:3px;padding:14px 10px}
+.hv-brand{display:flex;align-items:center;gap:6px;font-size:15px;font-weight:500;padding:2px 5px 11px;color:#1F1A15;font-family:Georgia,serif}
+.hv-deck{font-size:9.5px;letter-spacing:.4px;text-transform:uppercase;color:#95876F;padding:0 5px 3px}
+.hv-deckbox{display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-radius:9px;background:#FFFDF8;border:.5px solid #ECE1CF;font-size:11.5px;color:#6B6051;margin-bottom:9px}
+.hv-nav{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:9px;font-size:12px;color:#6B6051}
+.hv-nav i{font-size:15px}
+.hv-nav.on{background:#F2DCCF;color:#9A3F22;font-weight:500}
+.hv-new{margin-top:auto;display:flex;align-items:center;justify-content:center;gap:5px;padding:8px;border-radius:10px;font-size:12px;font-weight:500;color:#fff;background:#C75B39}
+.hv-main{padding:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.hv-h1{font-size:21px;font-weight:500;color:#26201A;font-family:Georgia,serif}
+.hv-cols{display:grid;grid-template-columns:1.45fr 1fr;gap:12px;align-items:start}
+.hv-card{background:#FFFDF8;border:.5px solid #ECE1CF;border-radius:14px;padding:14px 16px}
+.hv-lab{font-size:10px;letter-spacing:.4px;text-transform:uppercase;color:#6B6051;font-weight:500;margin:0 0 9px}
+.hv-help{font-size:11.5px;color:#95876F;margin:8px 0 0;line-height:1.5}
+.hv-sel{display:flex;align-items:center;justify-content:space-between;padding:8px 11px;border-radius:9px;border:.5px solid #E2D6C2;background:#FFFDF8;color:#2C2620;font-size:12.5px}
+.hv-sel i{color:#95876F;font-size:14px}
+.hv-seg{display:inline-flex;background:#EFE6D6;border-radius:10px;padding:3px;gap:2px;margin-bottom:10px}
+.hv-segi{padding:6px 13px;border-radius:8px;font-size:12px;color:#6B6051}
+.hv-segi.on{background:#FFFDF8;color:#2C2620;font-weight:500}
+.hv-fieldrow{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.hv-fieldrow label{font-size:12px;color:#6B6051;width:74px}
+.hv-num{background:#FFFDF8;border:.5px solid #E2D6C2;border-radius:8px;padding:7px 10px;color:#2C2620;font-size:13px;width:88px;font-family:ui-monospace,Menlo,monospace}
+.hv-chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:4px}
+.hv-chip{padding:6px 12px;border-radius:999px;border:.5px solid #E2D6C2;background:#FFFDF8;color:#6B6051;font-size:11.5px}
+.hv-chip.on{background:#F2DCCF;border-color:#E6C3B2;color:#9A3F22;font-weight:500}
+.hv-toggrow{display:flex;align-items:center;gap:10px;margin-top:12px}
+.hv-sw{width:34px;height:20px;border-radius:999px;background:#E2D6C2;position:relative;flex-shrink:0}
+.hv-sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#FFFDF8}
+.hv-sw.on{background:#C75B39}
+.hv-sw.on::after{left:16px}
+.hv-prev{background:#FFFDF8;border:.5px solid #ECE1CF;border-radius:14px;padding:16px;text-align:center}
+.hv-prevnum{font-size:38px;font-weight:500;color:#26201A;font-family:Georgia,serif;line-height:1}
+.hv-prevcap{font-size:11.5px;color:#95876F;margin:4px 0 14px}
+.hv-prevline{display:flex;justify-content:space-between;font-size:12px;padding:7px 0;border-top:.5px solid #ECE1CF;color:#6B6051}
+.hv-prevline b{font-weight:500;color:#2C2620}
+.hv-cta{display:flex;align-items:center;justify-content:center;gap:7px;padding:11px;border-radius:11px;background:#C75B39;color:#fff;font-size:13px;font-weight:500;margin-top:14px}
+.hv-cta2{display:flex;align-items:center;justify-content:center;gap:7px;padding:9px;border-radius:11px;background:#FFFDF8;border:.5px solid #E2D6C2;color:#6B6051;font-size:12px;margin-top:8px}
+</style>
+<div class="hv">
+  <aside class="hv-side">
+    <div class="hv-brand"><i class="ti ti-flame" style="color:#C75B39" aria-hidden="true"></i>Hearth</div>
+    <div class="hv-deck">Deck</div>
+    <div class="hv-deckbox">Default <i class="ti ti-chevron-down" aria-hidden="true"></i></div>
+    <div class="hv-nav"><i class="ti ti-home" aria-hidden="true"></i>Dashboard</div>
+    <div class="hv-nav"><i class="ti ti-book" aria-hidden="true"></i>Library</div>
+    <div class="hv-nav on"><i class="ti ti-player-play" aria-hidden="true"></i>Study</div>
+    <div class="hv-nav"><i class="ti ti-chart-bar" aria-hidden="true"></i>Stats</div>
+    <div class="hv-nav"><i class="ti ti-tag" aria-hidden="true"></i>Tags</div>
+    <div class="hv-nav"><i class="ti ti-settings" aria-hidden="true"></i>Settings</div>
+    <div class="hv-new"><i class="ti ti-plus" aria-hidden="true"></i>New Shard</div>
+  </aside>
+  <main class="hv-main">
+    <div style="display:flex;align-items:baseline;gap:10px">
+      <span class="hv-h1">Study</span>
+      <span style="font-size:11.5px;color:#95876F">Scheduling: SM-2</span>
+    </div>
+    <div class="hv-cols">
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div class="hv-card">
+          <p class="hv-lab">Deck</p>
+          <div class="hv-sel">Default <i class="ti ti-chevron-down" aria-hidden="true"></i></div>
+          <p class="hv-help">Study one deck, or pick “All decks” to draw from every deck at once.</p>
+        </div>
+        <div class="hv-card">
+          <p class="hv-lab">Session</p>
+          <div class="hv-seg"><span class="hv-segi on">By card count</span><span class="hv-segi">By time</span></div>
+          <div class="hv-fieldrow"><label>Max cards</label><input class="hv-num" value="100" readonly aria-label="Max cards"></div>
+          <div class="hv-toggrow"><span class="hv-sw"></span><span style="font-size:12px;color:#6B6051">Cram mode — practice the whole set, ignore due dates</span></div>
+        </div>
+        <div class="hv-card">
+          <p class="hv-lab">Difficulty — none selected means all</p>
+          <div class="hv-chips">
+            <span class="hv-chip on">beginner</span>
+            <span class="hv-chip">intermediate</span>
+            <span class="hv-chip">advanced</span>
+            <span class="hv-chip">expert</span>
+            <span class="hv-chip">master</span>
+            <span class="hv-chip"><i class="ti ti-flame" style="font-size:11px" aria-hidden="true"></i> foundation only</span>
+          </div>
+        </div>
+      </div>
+      <div class="hv-prev">
+        <p class="hv-lab" style="text-align:left">Session preview</p>
+        <div class="hv-prevnum">34</div>
+        <div class="hv-prevcap">cards in this queue</div>
+        <div class="hv-prevline"><span>Deck</span><b>Default</b></div>
+        <div class="hv-prevline"><span>Type</span><b>By card count</b></div>
+        <div class="hv-prevline"><span>Difficulty</span><b>beginner</b></div>
+        <div class="hv-cta"><i class="ti ti-player-play" aria-hidden="true"></i>Build queue</div>
+        <div class="hv-cta2"><i class="ti ti-bolt" aria-hidden="true"></i>Daily (Ctrl+D)</div>
+      </div>
+    </div>
+  </main>
+</div>

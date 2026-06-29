@@ -1,0 +1,119 @@
+<h2 style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Hearth dashboard concept for Bonfire: a warm light editorial rebrand with serif headings, cream surfaces, terracotta and sage accents, and circular progress rings.</h2>
+<style>
+.hh{width:100%;border-radius:18px;overflow:hidden;background:#f1e9da;border:1px solid #e2d6c2;font-family:var(--font-sans);color:#2c2620;display:grid;grid-template-columns:140px 1fr;min-height:560px}
+.hh *{box-sizing:border-box}
+.hh-serif{font-family:Georgia,"Iowan Old Style","Times New Roman",serif}
+.hh-side{background:#f8f2e7;border-right:1px solid #e7dcc9;display:flex;flex-direction:column;gap:4px;padding:17px 12px}
+.hh-brand{display:flex;align-items:center;gap:7px;font-size:17px;font-weight:500;padding:2px 6px 13px;color:#1f1a15}
+.hh-deck{font-size:10.5px;color:#a0917a;padding:0 6px 4px;letter-spacing:.4px;text-transform:uppercase}
+.hh-deckbox{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:10px;background:#fffdf8;border:1px solid #e7dcc9;font-size:12px;margin-bottom:11px;color:#5a5044}
+.hh-nav{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:10px;font-size:13px;color:#6b6051;cursor:pointer}
+.hh-nav i{font-size:16px}
+.hh-nav.on{color:#9a3f22;background:#f2dccf;font-weight:500}
+.hh-new{margin-top:auto;display:flex;align-items:center;justify-content:center;gap:6px;padding:10px;border-radius:11px;font-size:12.5px;font-weight:500;color:#fff;background:#c75b39;box-shadow:0 5px 14px rgba(199,91,57,.28)}
+.hh-main{padding:18px;display:flex;flex-direction:column;gap:13px}
+.hh-top{display:flex;align-items:flex-end;justify-content:space-between}
+.hh-h1{font-size:24px;font-weight:500;color:#26201a}
+.hh-sub{font-size:12px;color:#8a7f6e;margin-top:2px}
+.hh-tools{display:flex;gap:7px}
+.hh-icbtn{width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:10px;background:#fffdf8;border:1px solid #e7dcc9;color:#6b6051;font-size:15px}
+.hh-hero{display:flex;align-items:center;gap:18px;padding:16px 18px;border-radius:16px;background:#fffdf8;border:1px solid #ece1cf;box-shadow:0 6px 18px rgba(140,100,50,.07)}
+.hh-hero .txt{flex:1}
+.hh-hero h3{margin:0;font-size:19px;font-weight:500;color:#26201a}
+.hh-hero p{margin:4px 0 13px;font-size:12.5px;color:#8a7f6e;line-height:1.5}
+.hh-herobtn{display:inline-flex;align-items:center;gap:7px;padding:9px 15px;border-radius:11px;font-size:12.5px;font-weight:500;color:#fff;background:#c75b39}
+.hh-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:11px}
+.hh-stat{padding:14px 15px;border-radius:14px;background:#fffdf8;border:1px solid #ece1cf}
+.hh-stat .n{font-size:27px;font-weight:500;line-height:1;color:#2c2620}
+.hh-stat .l{font-size:11px;color:#9a8c77;margin-top:6px}
+.hh-cols{display:grid;grid-template-columns:1fr 1.3fr;gap:13px}
+.hh-panel{padding:15px 17px;border-radius:14px;background:#fffdf8;border:1px solid #ece1cf}
+.hh-pt{font-size:11px;letter-spacing:.4px;text-transform:uppercase;color:#a0917a;margin:0 0 13px;font-weight:500}
+.hh-lang{display:flex;align-items:center;gap:10px;margin-bottom:13px}
+.hh-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.hh-lname{font-size:12.5px;width:80px;color:#4a4136}
+.hh-track{flex:1;height:8px;border-radius:5px;background:#efe6d6;overflow:hidden}
+.hh-fill{height:100%;border-radius:5px}
+.hh-cnt{font-size:12px;color:#6b6051;width:18px;text-align:right;font-weight:500}
+.hh-fc{display:flex;align-items:flex-end;justify-content:space-between;height:78px;gap:7px}
+.hh-fcb{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px}
+.hh-bar{width:100%;border-radius:5px;background:#ece1cf}
+.hh-bar.spike{background:#c75b39}
+.hh-day{font-size:10.5px;color:#a0917a}
+.hh-list{padding:15px 17px;border-radius:14px;background:#fffdf8;border:1px solid #ece1cf}
+.hh-row{display:flex;align-items:center;gap:11px;padding:9px 0;border-bottom:1px solid #f0e7d7;font-size:13px;color:#3a332a}
+.hh-row:last-child{border-bottom:none}
+.hh-rdot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.hh-rmeta{margin-left:auto;font-size:11px;color:#a89a83}
+</style>
+<div class="hh">
+  <aside class="hh-side">
+    <div class="hh-brand hh-serif"><i class="ti ti-flame" style="color:#c75b39" aria-hidden="true"></i>Bonfire</div>
+    <div class="hh-deck">Deck</div>
+    <div class="hh-deckbox">Default <i class="ti ti-chevron-down" aria-hidden="true"></i></div>
+    <div class="hh-nav on"><i class="ti ti-home" aria-hidden="true"></i>Dashboard</div>
+    <div class="hh-nav"><i class="ti ti-book" aria-hidden="true"></i>Library</div>
+    <div class="hh-nav"><i class="ti ti-player-play" aria-hidden="true"></i>Study</div>
+    <div class="hh-nav"><i class="ti ti-chart-bar" aria-hidden="true"></i>Stats</div>
+    <div class="hh-nav"><i class="ti ti-tag" aria-hidden="true"></i>Tags</div>
+    <div class="hh-nav"><i class="ti ti-settings" aria-hidden="true"></i>Settings</div>
+    <div class="hh-new"><i class="ti ti-plus" aria-hidden="true"></i>New Shard</div>
+  </aside>
+  <main class="hh-main">
+    <div class="hh-top">
+      <div>
+        <div class="hh-h1 hh-serif">Good evening</div>
+        <div class="hh-sub">You have a quiet day — nothing due until Saturday.</div>
+      </div>
+      <div class="hh-tools">
+        <div class="hh-icbtn"><i class="ti ti-search" aria-hidden="true"></i></div>
+        <div class="hh-icbtn"><i class="ti ti-download" aria-hidden="true"></i></div>
+      </div>
+    </div>
+    <div class="hh-hero">
+      <svg width="78" height="78" viewBox="0 0 78 78" aria-hidden="true">
+        <circle cx="39" cy="39" r="30" fill="none" stroke="#efe6d6" stroke-width="9"/>
+        <circle cx="39" cy="39" r="30" fill="none" stroke="#c75b39" stroke-width="9" stroke-dasharray="62 127" transform="rotate(-90 39 39)" stroke-linecap="round"/>
+        <text x="39" y="36" text-anchor="middle" fill="#2c2620" font-size="18" font-weight="500" font-family="Georgia,serif">33%</text>
+        <text x="39" y="50" text-anchor="middle" fill="#a0917a" font-size="9" font-family="var(--font-sans)">mastery</text>
+      </svg>
+      <div class="txt">
+        <h3 class="hh-serif">Tend the fire</h3>
+        <p>Your deck is 33% mastered. A short session keeps the embers warm and your 1-day streak alive.</p>
+        <span class="hh-herobtn"><i class="ti ti-player-play" aria-hidden="true"></i>Begin review</span>
+      </div>
+    </div>
+    <div class="hh-stats">
+      <div class="hh-stat"><div class="n hh-serif">37</div><div class="l">Total shards</div></div>
+      <div class="hh-stat"><div class="n hh-serif">0</div><div class="l">Due today</div></div>
+      <div class="hh-stat"><div class="n hh-serif">1</div><div class="l">Day streak</div></div>
+      <div class="hh-stat"><div class="n hh-serif">58</div><div class="l">Reviews</div></div>
+    </div>
+    <div class="hh-cols">
+      <div class="hh-panel">
+        <p class="hh-pt">Languages</p>
+        <div class="hh-lang"><span class="hh-dot" style="background:#c75b39"></span><span class="hh-lname">WebDev</span><span class="hh-track"><span class="hh-fill" style="width:76%;background:#c75b39"></span></span><span class="hh-cnt">28</span></div>
+        <div class="hh-lang" style="margin-bottom:0"><span class="hh-dot" style="background:#6f9070"></span><span class="hh-lname">Shell</span><span class="hh-track"><span class="hh-fill" style="width:24%;background:#6f9070"></span></span><span class="hh-cnt">9</span></div>
+      </div>
+      <div class="hh-panel">
+        <p class="hh-pt">Next 7 days</p>
+        <div class="hh-fc">
+          <div class="hh-fcb"><span class="hh-bar" style="height:4px"></span><span class="hh-day">Today</span></div>
+          <div class="hh-fcb"><span class="hh-bar spike" style="height:60px"></span><span class="hh-day">Sat</span></div>
+          <div class="hh-fcb"><span class="hh-bar" style="height:9px"></span><span class="hh-day">Sun</span></div>
+          <div class="hh-fcb"><span class="hh-bar" style="height:4px"></span><span class="hh-day">Mon</span></div>
+          <div class="hh-fcb"><span class="hh-bar" style="height:4px"></span><span class="hh-day">Tue</span></div>
+          <div class="hh-fcb"><span class="hh-bar" style="height:4px"></span><span class="hh-day">Wed</span></div>
+          <div class="hh-fcb"><span class="hh-bar" style="height:4px"></span><span class="hh-day">Thu</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="hh-list">
+      <p class="hh-pt">Recently added</p>
+      <div class="hh-row"><span class="hh-rdot" style="background:#c75b39"></span>Meta Description<span class="hh-rmeta">WebDev · beginner</span></div>
+      <div class="hh-row"><span class="hh-rdot" style="background:#c75b39"></span>Audio Element<span class="hh-rmeta">WebDev · beginner</span></div>
+      <div class="hh-row"><span class="hh-rdot" style="background:#c75b39"></span>Video Element<span class="hh-rmeta">WebDev · beginner</span></div>
+      <div class="hh-row"><span class="hh-rdot" style="background:#6f9070"></span>Make Chain Directory<span class="hh-rmeta">Shell · beginner</span></div>
+    </div>
+  </main>
+</div>

@@ -1,7 +1,7 @@
 // Library: fuzzy search + language/category/familiarity/tag filters + 3 sort modes,
 // plus multi-select with bulk actions (item 1: delete / re-tag / add-to-deck /
 // remove-from-deck / edit).
-import { el, esc, langBadge, famBadge, metaBadges, catBadge, isDue } from "../dom.js";
+import { el, esc, langDot, metaBadges, isDue } from "../dom.js";
 import { CATEGORIES, FAMILIARITIES, FAMILIARITY_ORDER } from "../constants.js";
 import {
   bulkDelete,
@@ -63,12 +63,14 @@ export function renderLibrary(container, ctx, params = {}) {
         <span id="count"></span>
         <span class="muted" id="sel-count"></span>
         <div class="spacer"></div>
-        <button class="btn btn-accent mini" id="bulk-edit" disabled>Edit</button>
-        <button class="btn btn-tool mini" id="bulk-fields" disabled>Edit field ▾</button>
-        <button class="btn btn-tool mini" id="bulk-media" disabled>Add media ▾</button>
-        <button class="btn btn-tool mini" id="bulk-deck-add" disabled>Add to deck</button>
-        <button class="btn btn-tool mini" id="bulk-deck-rm" disabled>Remove from deck</button>
-        <button class="btn btn-danger mini" id="bulk-del" disabled>Delete</button>
+        <span class="bulk-actions" id="bulk-actions" hidden>
+          <button class="btn btn-accent mini" id="bulk-edit" disabled>Edit</button>
+          <button class="btn btn-tool mini" id="bulk-fields">Edit field ▾</button>
+          <button class="btn btn-tool mini" id="bulk-media">Add media ▾</button>
+          <button class="btn btn-tool mini" id="bulk-deck-add">Add to deck</button>
+          <button class="btn btn-tool mini" id="bulk-deck-rm">Remove from deck</button>
+          <button class="btn btn-danger mini" id="bulk-del">Delete</button>
+        </span>
       </div>
       <div id="list"></div>
     </div>
@@ -84,6 +86,7 @@ export function renderLibrary(container, ctx, params = {}) {
   const count = root.querySelector("#count");
   const selAll = root.querySelector("#sel-all");
   const selCount = root.querySelector("#sel-count");
+  const bulkActions = root.querySelector("#bulk-actions");
   const bulkEdit = root.querySelector("#bulk-edit");
   const bulkFields = root.querySelector("#bulk-fields");
   const bulkMedia = root.querySelector("#bulk-media");
@@ -94,7 +97,8 @@ export function renderLibrary(container, ctx, params = {}) {
   function updateToolbar() {
     const n = selected.size;
     selCount.textContent = n ? `· ${n} selected` : "";
-    [bulkFields, bulkMedia, bulkDeckAdd, bulkDeckRm, bulkDel].forEach((b) => (b.disabled = n === 0));
+    // The action buttons appear only when something is selected (contextual bar).
+    bulkActions.hidden = n === 0;
     bulkEdit.disabled = n !== 1; // single-card edit only
     selAll.checked = lastResultIds.length > 0 && lastResultIds.every((id) => selected.has(id));
   }
@@ -142,13 +146,11 @@ export function renderLibrary(container, ctx, params = {}) {
       const row = el(`
         <div class="list-row">
           <input type="checkbox" class="row-sel" ${selected.has(s.id) ? "checked" : ""} />
-          ${langBadge(s.language)}
+          ${langDot(s.language)}
           <span class="title">${esc(s.title) || "(untitled)"}</span>
           ${isDue(s) ? '<span class="review-dot" title="Due for review today">●</span>' : ""}
           ${metaBadges(s.tags)}
-          ${catBadge(s.category)}
-          ${famBadge(s.familiarity)}
-          <button class="btn mini review-btn" title="Review this card (no answer shown first)">Review</button>
+          <button class="btn btn-tool mini review-btn" title="Review this card (no answer shown first)">Review</button>
         </div>
       `);
       const cb = row.querySelector(".row-sel");

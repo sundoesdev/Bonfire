@@ -58,9 +58,7 @@ function clozeHtml(text, mode) {
 
 // Small badge for non-basic card types shown on the study card.
 function cardTypeBadge(type) {
-  return type && type !== "basic"
-    ? `<span class="badge" style="background:#555">${esc(type)}</span>`
-    : "";
+  return type && type !== "basic" ? `<span class="badge">${esc(type)}</span>` : "";
 }
 
 export const DEFAULT_CONFIG = {
@@ -221,6 +219,18 @@ export function buildStudyConfigForm(ctx, cfg, opts = {}) {
       )
       .join("");
 
+  // Same selected-set semantics as checkList (a hidden checkbox carries the value
+  // so readGroup/collect are unchanged), rendered as on/off pill chips.
+  const chipList = (items, selected, name) =>
+    items
+      .map(
+        (it) =>
+          `<label class="chip-toggle ${selected.includes(it) ? "on" : ""}"><input type="checkbox" data-group="${name}" value="${esc(it)}" ${
+            selected.includes(it) ? "checked" : ""
+          } hidden/> ${esc(it)}</label>`
+      )
+      .join("");
+
   const node = el(`
     <div>
       <div class="panel">
@@ -228,10 +238,16 @@ export function buildStudyConfigForm(ctx, cfg, opts = {}) {
         <div class="muted" style="margin-bottom:8px">A session is either <b>by card count</b> (study a fixed number of cards, no timer) or <b>by time</b> (study every due card until your time budget runs out) — pick one.</div>
         <div class="form-grid">
           <label>Session type</label>
-          <select id="c-mode">
-            <option value="count" ${cfg.sessionMode !== "time" ? "selected" : ""}>By card count (no timer)</option>
-            <option value="time" ${cfg.sessionMode === "time" ? "selected" : ""}>By time (all due cards)</option>
-          </select>
+          <div>
+            <div class="segmented" id="c-mode-seg">
+              <button type="button" class="seg ${cfg.sessionMode !== "time" ? "on" : ""}" data-mode="count">By card count</button>
+              <button type="button" class="seg ${cfg.sessionMode === "time" ? "on" : ""}" data-mode="time">By time</button>
+            </div>
+            <select id="c-mode" hidden>
+              <option value="count" ${cfg.sessionMode !== "time" ? "selected" : ""}>By card count (no timer)</option>
+              <option value="time" ${cfg.sessionMode === "time" ? "selected" : ""}>By time (all due cards)</option>
+            </select>
+          </div>
           <label id="c-max-label">Max cards</label>
           <input type="text" id="c-max" value="${cfg.maxCards}" />
           <label id="c-time-label">Max time (min)</label>
@@ -281,9 +297,11 @@ export function buildStudyConfigForm(ctx, cfg, opts = {}) {
           : ""
       }
       <div class="panel">
-        <div class="section-title">Difficulty <span class="muted">(none checked = all)</span></div>
-        <div class="chk-grid">${checkList(DIFFICULTIES, cfg.difficulties, "diff")}</div>
-        <label class="chk" style="margin-top:8px"><input type="checkbox" id="c-foundation" ${cfg.foundationOnly ? "checked" : ""}/> Foundational cards only (cards tagged <code>foundation</code>)</label>
+        <div class="section-title">Difficulty <span class="muted">(none selected = all)</span></div>
+        <div class="chip-row">
+          ${chipList(DIFFICULTIES, cfg.difficulties, "diff")}
+          <label class="chip-toggle ${cfg.foundationOnly ? "on" : ""}"><input type="checkbox" id="c-foundation" ${cfg.foundationOnly ? "checked" : ""} hidden/><i class="ti ti-flame"></i> foundation only</label>
+        </div>
       </div>
       ${
         showFilters
@@ -316,11 +334,28 @@ export function buildStudyConfigForm(ctx, cfg, opts = {}) {
     timeLabel.style.display = timed ? "" : "none";
     timeInput.style.display = timed ? "" : "none";
     modeHint.textContent = timed
-      ? "Time-based: every due card is queued and the timer counts your budget down (and into the negative — it never hard-stops). When you clear all due cards, Bonfire offers Cram to keep going until you stop."
+      ? "Time-based: every due card is queued and the timer counts your budget down (and into the negative — it never hard-stops). When you clear all due cards, Hearth offers Cram to keep going until you stop."
       : "Count-based: study up to Max cards, no timer.";
   }
   modeSel.addEventListener("change", syncMode);
   syncMode();
+
+  // Segmented session-type control drives the (hidden) #c-mode select, so syncMode
+  // and collect keep reading modeSel.value — no downstream logic changes.
+  const segBtns = node.querySelectorAll("#c-mode-seg .seg");
+  segBtns.forEach((b) =>
+    b.addEventListener("click", () => {
+      modeSel.value = b.dataset.mode;
+      segBtns.forEach((x) => x.classList.toggle("on", x === b));
+      modeSel.dispatchEvent(new Event("change", { bubbles: true }));
+    })
+  );
+
+  // Chip toggles (difficulty + foundation) mirror their hidden checkbox's state into
+  // the .on class; readGroup/collect still read the checkboxes' :checked.
+  node.querySelectorAll(".chip-toggle input[type=checkbox]").forEach((cb) =>
+    cb.addEventListener("change", () => cb.closest(".chip-toggle").classList.toggle("on", cb.checked))
+  );
 
   const readGroup = (name) =>
     [...node.querySelectorAll(`input[data-group="${name}"]:checked`)].map((c) => c.value);
@@ -427,31 +462,68 @@ function renderSetup(container, ctx, cfg, notice) {
 
   const root = el(`
     <div>
-      <div class="row" style="margin-bottom:14px">
-        <h2 style="margin:0;font-size:16px">Study</h2>
+      <div class="row" style="margin-bottom:14px;align-items:baseline">
+        <div class="page-greeting">Study</div>
         <span class="muted" id="algo-note" style="margin-left:10px"></span>
-        <div class="spacer"></div>
-        <button class="btn btn-primary" id="weak">Drill weak spots</button>
-        <button class="btn btn-primary" id="build">Build queue →</button>
       </div>
-      ${notice ? `<div class="panel" style="border-color:#5a4a1f;color:#f5c451">${esc(notice)}</div>` : ""}
-      <div class="panel">
-        <div class="section-title">Deck</div>
-        <select id="study-deck">${deckOpts}</select>
-        <div class="muted" style="margin-top:6px">Study one deck, or pick “All decks” to draw from every deck at once.</div>
+      ${notice ? `<div class="panel" style="border-color:var(--accent);background:var(--accent-soft);color:var(--text)">${esc(notice)}</div>` : ""}
+      <div class="study-cols">
+        <div>
+          <div class="panel">
+            <div class="section-title">Deck</div>
+            <select id="study-deck">${deckOpts}</select>
+            <div class="muted" style="margin-top:6px">Study one deck, or pick “All decks” to draw from every deck at once.</div>
+          </div>
+          <div id="form-slot"></div>
+        </div>
+        <div class="panel preview-card">
+          <div class="section-title" style="text-align:left">Session preview</div>
+          <div class="preview-num" id="prev-count">0</div>
+          <div class="preview-cap">cards in this queue</div>
+          <div class="preview-line"><span>Deck</span><b id="prev-deck"></b></div>
+          <div class="preview-line"><span>Type</span><b id="prev-type"></b></div>
+          <div class="preview-line"><span>Difficulty</span><b id="prev-diff"></b></div>
+          <button class="btn btn-primary full-width" id="build" style="margin-top:14px"><i class="ti ti-player-play"></i> Build queue</button>
+          <button class="btn btn-tool full-width" id="daily" style="margin-top:8px"><i class="ti ti-bolt"></i> Daily (Ctrl+D)</button>
+          <button class="btn btn-tool full-width" id="weak" style="margin-top:8px">Drill weak spots</button>
+        </div>
       </div>
-      <div id="form-slot"></div>
     </div>
   `);
   root.querySelector("#form-slot").appendChild(form.node);
 
-  // Switching to a specific (different) deck re-scopes the whole view; "All decks"
-  // is handled at build time by drawing from allShards.
   const deckSel = root.querySelector("#study-deck");
   const studyPool = () => (deckSel.value === "__all__" ? ctx.state.allShards : ctx.state.shards);
+
+  // Live session preview: queue size + summary, recomputed as the form changes.
+  const prevCount = root.querySelector("#prev-count");
+  const prevDeck = root.querySelector("#prev-deck");
+  const prevType = root.querySelector("#prev-type");
+  const prevDiff = root.querySelector("#prev-diff");
+  function refreshPreview() {
+    const next = form.collect();
+    const matches = matchingCards(studyPool(), next);
+    prevCount.textContent = queueCap(next, matches.length);
+    prevDeck.textContent = deckSel.options[deckSel.selectedIndex]?.text || "";
+    prevType.textContent = next.sessionMode === "time" ? "By time" : "By card count";
+    prevDiff.textContent = next.foundationOnly
+      ? "foundation only"
+      : (next.difficulties || []).length
+        ? next.difficulties.join(", ")
+        : "all";
+  }
+  form.node.addEventListener("input", refreshPreview);
+  form.node.addEventListener("change", refreshPreview);
+
+  // Switching to a specific (different) deck re-scopes the whole view; "All decks"
+  // is handled at build time by drawing from allShards.
   deckSel.addEventListener("change", () => {
     const v = deckSel.value;
-    if (v !== "__all__" && v !== ctx.currentDeckId()) ctx.setDeck(v);
+    if (v !== "__all__" && v !== ctx.currentDeckId()) {
+      ctx.setDeck(v); // re-renders the view
+      return;
+    }
+    refreshPreview();
   });
 
   // Show which scheduling algorithm is active (set in Settings → Spaced repetition).
@@ -462,6 +534,8 @@ function renderSetup(container, ctx, cfg, notice) {
       if (note) note.textContent = `Scheduling: ${(a || "sm2").toUpperCase()}`;
     })
     .catch(() => {});
+
+  root.querySelector("#daily").addEventListener("click", () => ctx.quickStudy());
 
   root.querySelector("#weak").addEventListener("click", () => {
     const next = form.collect();
@@ -488,6 +562,7 @@ function renderSetup(container, ctx, cfg, notice) {
 
   container.innerHTML = "";
   container.appendChild(root);
+  refreshPreview();
 }
 
 // ---------- Editable queue preview ----------
@@ -523,7 +598,7 @@ function renderPreview(container, ctx, cfg, queue, pool) {
           ${langBadge(s.language)}
           <span class="title">${esc(s.title) || "(untitled)"}</span>
           ${metaBadges(s.tags)}
-          ${isRevealOnly(s.tags) ? '<span class="badge" style="background:#555">reveal</span>' : ""}
+          ${isRevealOnly(s.tags) ? '<span class="badge">reveal</span>' : ""}
           <button class="btn btn-tool mini" data-act="up" ${i === 0 ? "disabled" : ""}>↑</button>
           <button class="btn btn-tool mini" data-act="down" ${i === queue.length - 1 ? "disabled" : ""}>↓</button>
           <button class="btn btn-danger mini" data-act="rm">✕</button>
@@ -598,9 +673,11 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
   let offeredCram = false;
 
   // Lock navigation away while a real (non single-card) session runs (item 6).
+  // Also quiet the chrome (dim the sidebar) so the card is the focus field (§11).
   if (!opts.single) {
     ctx.studyActive = true;
     ctx.endStudySession = () => finish();
+    document.body.classList.add("studying");
   }
 
   const session = {
@@ -651,6 +728,7 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
     }
     ctx.studyActive = false;
     ctx.endStudySession = null;
+    document.body.classList.remove("studying");
     container.innerHTML = "";
     container.appendChild(summary());
   }
@@ -917,9 +995,9 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       // editor with live syntax highlighting + optional VIM (items 6 & 7).
       const useCM = highlight && !isCloze && !isReverse && !!window.CodeMirror;
       answerArea.innerHTML = `
-        ${useCM ? `<label class="chk editor-vim-toggle"><input type="checkbox" id="vim-toggle" ${vimEnabled ? "checked" : ""}/> VIM mode</label>` : ""}
+        ${useCM ? `<label class="editor-vim-toggle"><input type="checkbox" id="vim-toggle" ${vimEnabled ? "checked" : ""}/> <span>VIM mode</span></label>` : ""}
         <textarea class="code-editor" id="type-answer" spellcheck="false" placeholder="${esc(ph)}"></textarea>`;
-      controls.innerHTML = '<button class="btn btn-primary full-width" id="submit">Submit ▶</button>';
+      controls.innerHTML = '<button class="btn btn-primary full-width" id="submit">Submit <span class="kbd">Ctrl + Enter</span></button>';
       const ta = answerArea.querySelector("#type-answer");
       const getValue = () => (cm ? cm.getValue() : ta.value);
       const submit = () => showReveal(getValue());
@@ -929,6 +1007,7 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
           lineNumbers: false,
           lineWrapping: true,
           viewportMargin: Infinity,
+          placeholder: ph,
           keyMap: vimEnabled ? "vim" : "default",
           extraKeys: { "Ctrl-Enter": submit },
         });
@@ -1005,9 +1084,9 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
     const elapsedMin = Math.round((Date.now() - session.startMs) / 60000);
     const root = el(`
       <div>
-        <div class="review-card">
-          <div class="title-big">Session Complete</div>
-          <div class="desc">Tested ${session.stats.reviewed} card(s) in ~${elapsedMin} min. ${session.stats.forgot} forgotten, ${session.stats.advanced} advanced.</div>
+        <div class="review-card" style="text-align:center">
+          <div class="title-big">Embers warm</div>
+          <div class="desc">You reviewed ${session.stats.reviewed} shard${session.stats.reviewed === 1 ? "" : "s"} today${elapsedMin ? ` in ~${elapsedMin} min` : ""}. ${session.stats.advanced} advanced${session.stats.forgot ? `, ${session.stats.forgot} to revisit` : ""}.</div>
           <button class="btn btn-primary" id="done" style="margin-top:16px">Done</button>
         </div>
       </div>

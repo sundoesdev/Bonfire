@@ -4,9 +4,11 @@
     <meta charset="UTF-8" />
     <link rel="stylesheet" href="/vendor/codemirror/lib/codemirror.min.css" />
     <link rel="stylesheet" href="/vendor/codemirror/addon/dialog/dialog.min.css" />
+    <!-- Vendored Tabler outline icon webfont (MIT): `ti ti-*` classes. -->
+    <link rel="stylesheet" href="/vendor/icons/tabler-icons.min.css" />
     <link rel="stylesheet" href="styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bonfire</title>
+    <title>Hearth</title>
     <!-- Vendored highlight.js browser bundle exposes global `hljs`. -->
     <script src="/vendor/highlight.min.js"></script>
     <!-- Vendored CodeMirror 5 (global `CodeMirror`): live syntax highlighting + VIM
@@ -37,6 +39,7 @@
     <script src="/vendor/codemirror/mode/r/r.min.js"></script>
     <script src="/vendor/codemirror/addon/search/searchcursor.min.js"></script>
     <script src="/vendor/codemirror/addon/dialog/dialog.min.js"></script>
+    <script src="/vendor/codemirror/addon/display/placeholder.min.js"></script>
     <script src="/vendor/codemirror/keymap/vim.min.js"></script>
     <script type="module" src="/main.js"></script>
   </head>
@@ -44,22 +47,22 @@
   <body>
     <div id="app">
       <aside id="sidebar">
-        <div class="brand">Bonfire</div>
+        <div class="brand"><i class="ti ti-flame" aria-hidden="true"></i>Hearth</div>
         <button id="update-badge" class="update-badge" hidden>● Update available</button>
         <div class="deck-switch">
           <label for="deck-switcher">Deck</label>
           <select id="deck-switcher"></select>
         </div>
         <nav>
-          <button data-view="dashboard">Dashboard</button>
-          <button data-view="library">Library</button>
-          <button data-view="study">Study</button>
-          <button data-view="stats">Stats</button>
-          <button data-view="tags">Tags</button>
-          <button data-view="settings">Settings</button>
+          <button data-view="dashboard"><i class="ti ti-home" aria-hidden="true"></i>Dashboard</button>
+          <button data-view="library"><i class="ti ti-book" aria-hidden="true"></i>Library</button>
+          <button data-view="study"><i class="ti ti-player-play" aria-hidden="true"></i>Study</button>
+          <button data-view="stats"><i class="ti ti-chart-bar" aria-hidden="true"></i>Stats</button>
+          <button data-view="tags"><i class="ti ti-tag" aria-hidden="true"></i>Tags</button>
+          <button data-view="settings"><i class="ti ti-settings" aria-hidden="true"></i>Settings</button>
         </nav>
         <div class="sidebar-spacer"></div>
-        <button id="new-shard" class="btn btn-primary">+ New Shard</button>
+        <button id="new-shard" class="btn btn-primary"><i class="ti ti-plus" aria-hidden="true"></i>New Shard</button>
       </aside>
       <main id="view"></main>
     </div>

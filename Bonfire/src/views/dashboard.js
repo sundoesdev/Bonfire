@@ -1,6 +1,9 @@
 // Dashboard: stats, language breakdown, due-for-review, recently added.
-import { el, esc, langBadge, famBadge, catBadge, isDue } from "../dom.js";
-import { langColor } from "../constants.js";
+import { el, esc, langDot, isDue, progressRing } from "../dom.js";
+import { langColor, getDifficulty } from "../constants.js";
+
+// Familiarity → mastery rank (mirrors stats.js so the hero ring matches Deck mastery).
+const FAM_RANK = { shaky: 0, fresh: 1, solid: 2, mastered: 3 };
 import { exportVault, importVault } from "../data.js";
 import {
   bulkDelete,
@@ -11,20 +14,39 @@ import {
   mediaMenuItems,
 } from "../components/bulkBar.js";
 
-export function renderDashboard(container, ctx) {
+export async function renderDashboard(container, ctx) {
   const shards = ctx.state.shards;
   const due = shards.filter(isDue);
-  const langs = new Set(shards.map((s) => s.language).filter(Boolean));
-  const shaky = shards.filter((s) => s.familiarity === "shaky").length;
 
-  // Language counts, sorted descending.
+  // Language counts, sorted descending (for the Languages panel bars).
   const counts = {};
   for (const s of shards) {
     if (s.language) counts[s.language] = (counts[s.language] || 0) + 1;
   }
   const langEntries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const maxLang = langEntries.length ? langEntries[0][1] : 1;
 
   const recent = shards.slice(0, 10); // already modified_at DESC from backend
+
+  // Current-deck mastery (avg familiarity rank) for the hero ring.
+  const masteryPct = shards.length
+    ? Math.round((shards.reduce((a, s) => a + (FAM_RANK[s.familiarity] ?? 1) / 3, 0) / shards.length) * 100)
+    : 0;
+
+  // Day streak + total reviews from the review log (best-effort; empty on error).
+  let dayCount = new Map();
+  try {
+    const hist = await ctx.api.reviewHistory();
+    dayCount = new Map(hist.map((d) => [d.day, d.count]));
+  } catch (_e) {
+    /* no history yet */
+  }
+  const streak = currentStreak(dayCount);
+  const totalReviews = [...dayCount.values()].reduce((a, b) => a + b, 0);
+  const greeting = timeGreeting();
+  const sub = due.length
+    ? `${due.length} shard${due.length === 1 ? "" : "s"} due — a short session keeps the embers warm.`
+    : "You have a quiet day — nothing due right now.";
 
   // Multi-select for bulk actions (item 1), shared by the due + recent lists.
   const selected = new Set();
@@ -36,39 +58,56 @@ export function renderDashboard(container, ctx) {
 
   const root = el(`
     <div>
-      <div class="row" style="margin-bottom:14px">
-        <h2 style="margin:0;font-size:16px">Bonfire</h2>
-        <div class="spacer"></div>
-        <button class="btn btn-tool" id="export-btn">Export</button>
-        <button class="btn btn-tool" id="import-btn">Import</button>
+      <div class="dash-head">
+        <div>
+          <div class="page-greeting">${esc(greeting)}</div>
+          <div class="page-sub">${esc(sub)}</div>
+        </div>
+        <div class="row" style="gap:7px">
+          <button class="btn btn-tool icon-btn" id="export-btn" title="Export vault" aria-label="Export vault"><i class="ti ti-download" aria-hidden="true"></i></button>
+          <button class="btn btn-tool icon-btn" id="import-btn" title="Import vault" aria-label="Import vault"><i class="ti ti-upload" aria-hidden="true"></i></button>
+        </div>
+      </div>
+
+      <div class="hero">
+        ${progressRing(masteryPct, "mastery")}
+        <div class="hero-txt">
+          <h3>Tend the fire</h3>
+          <p>Your deck is ${masteryPct}% mastered. ${
+            due.length
+              ? `${due.length} shard${due.length === 1 ? "" : "s"} ${due.length === 1 ? "is" : "are"} ready — a`
+              : "A"
+          } short session keeps the embers warm${streak ? ` and your ${streak}-day streak alive` : ""}.</p>
+          <button class="btn btn-primary" id="hero-study"><i class="ti ti-player-play" aria-hidden="true"></i>Begin review</button>
+        </div>
       </div>
 
       <div class="stats">
-        <div class="stat-card"><div class="stat-num">${shards.length}</div><div class="stat-label">Total Shards</div></div>
-        <div class="stat-card"><div class="stat-num due">${due.length}</div><div class="stat-label">Due for Review</div></div>
-        <div class="stat-card"><div class="stat-num">${langs.size}</div><div class="stat-label">Languages</div></div>
-        <div class="stat-card"><div class="stat-num shaky">${shaky}</div><div class="stat-label">Shaky</div></div>
+        <div class="stat-card"><div class="stat-num">${shards.length}</div><div class="stat-label">Total shards</div></div>
+        <div class="stat-card"><div class="stat-num ${due.length ? "due" : ""}">${due.length}</div><div class="stat-label">Due today</div></div>
+        <div class="stat-card"><div class="stat-num">${streak}</div><div class="stat-label">Day streak</div></div>
+        <div class="stat-card"><div class="stat-num">${totalReviews}</div><div class="stat-label">Reviews</div></div>
       </div>
 
-      <div class="panel">
-        <div class="section-title">Languages</div>
-        <div class="lang-list">
+      <div class="dash-cols">
+        <div class="panel" style="margin-bottom:0">
+          <div class="section-title">Languages</div>
           ${
             langEntries.length
               ? langEntries
                   .map(
                     ([l, c]) =>
-                      `<span class="badge lang-chip" style="background:${langColor(l)}">${esc(l)}<span class="count">${c}</span></span>`
+                      `<div class="lang-row" style="--dot:${langColor(l)}"><span class="lang-dot"></span><span class="lang-name">${esc(l)}</span><span class="lang-track"><span class="lang-fill" style="width:${Math.round((c / maxLang) * 100)}%"></span></span><span class="lang-cnt">${c}</span></div>`
                   )
                   .join("")
               : '<span class="muted">No languages yet</span>'
           }
         </div>
-      </div>
 
-      <div class="panel">
-        <div class="section-title">Upcoming reviews (next 7 days)</div>
-        <div id="forecast"></div>
+        <div class="panel" style="margin-bottom:0">
+          <div class="section-title">Next 7 days</div>
+          <div id="forecast"></div>
+        </div>
       </div>
 
       <div class="panel">
@@ -135,12 +174,11 @@ export function renderDashboard(container, ctx) {
     const row = el(`
       <div class="list-row">
         <input type="checkbox" class="row-sel" ${selected.has(s.id) ? "checked" : ""} />
-        ${langBadge(s.language)}
+        ${langDot(s.language)}
         <span class="title">${esc(s.title) || "(untitled)"}</span>
         ${isDue(s) ? '<span class="review-dot" title="Due for review today">●</span>' : ""}
-        ${catBadge(s.category)}
-        ${famBadge(s.familiarity)}
-        <button class="btn mini review-btn" title="Review this card (no answer shown first)">Review</button>
+        <span class="row-meta">${esc(s.language || "")}${getDifficulty(s.tags) ? " · " + esc(getDifficulty(s.tags)) : ""}</span>
+        <button class="btn btn-tool mini review-btn" title="Review this card (no answer shown first)">Review</button>
       </div>
     `);
     const cb = row.querySelector(".row-sel");
@@ -219,6 +257,7 @@ export function renderDashboard(container, ctx) {
   }
 
   root.querySelector("#start-study").addEventListener("click", () => ctx.startStudy());
+  root.querySelector("#hero-study").addEventListener("click", () => ctx.startStudy());
   root.querySelector("#daily").addEventListener("click", () => ctx.quickStudy());
   root.querySelector("#weak").addEventListener("click", () => ctx.weakStudy());
   root.querySelector("#export-btn").addEventListener("click", () => exportVault(ctx));
@@ -228,6 +267,28 @@ export function renderDashboard(container, ctx) {
   });
 
   container.appendChild(root);
+}
+
+// Time-of-day greeting for the dashboard header.
+function timeGreeting() {
+  const h = new Date().getHours();
+  if (h < 5) return "Still up";
+  if (h < 12) return "Good morning";
+  if (h < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+// Current consecutive-day study streak from a day→count map (mirrors stats.js).
+function currentStreak(dayCount) {
+  const probe = new Date();
+  probe.setHours(0, 0, 0, 0);
+  if (!(dayCount.get(ymd(probe)) > 0)) probe.setDate(probe.getDate() - 1);
+  let n = 0;
+  while (dayCount.get(ymd(probe)) > 0) {
+    n++;
+    probe.setDate(probe.getDate() - 1);
+  }
+  return n;
 }
 
 // YYYY-MM-DD for a Date in local time.

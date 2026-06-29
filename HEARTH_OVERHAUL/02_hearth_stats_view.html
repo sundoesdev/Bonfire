@@ -1,0 +1,98 @@
+<h2 style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Hearth Stats view redesign: streak metric tiles, a warm activity heatmap, a calm card-debt panel, a warm retention curve, and a deck-mastery ring.</h2>
+<style>
+.hv{width:100%;border-radius:18px;overflow:hidden;background:#F1E9DA;color:#2C2620;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:grid;grid-template-columns:122px 1fr;min-height:540px}
+.hv *{box-sizing:border-box}
+.hv-side{background:#F8F2E7;border-right:.5px solid #ECE1CF;display:flex;flex-direction:column;gap:3px;padding:14px 10px}
+.hv-brand{display:flex;align-items:center;gap:6px;font-size:15px;font-weight:500;padding:2px 5px 11px;color:#1F1A15;font-family:Georgia,serif}
+.hv-deck{font-size:9.5px;letter-spacing:.4px;text-transform:uppercase;color:#95876F;padding:0 5px 3px}
+.hv-deckbox{display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-radius:9px;background:#FFFDF8;border:.5px solid #ECE1CF;font-size:11.5px;color:#6B6051;margin-bottom:9px}
+.hv-nav{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:9px;font-size:12px;color:#6B6051}
+.hv-nav i{font-size:15px}
+.hv-nav.on{background:#F2DCCF;color:#9A3F22;font-weight:500}
+.hv-new{margin-top:auto;display:flex;align-items:center;justify-content:center;gap:5px;padding:8px;border-radius:10px;font-size:12px;font-weight:500;color:#fff;background:#C75B39}
+.hv-main{padding:16px;display:flex;flex-direction:column;gap:11px;min-width:0}
+.hv-h1{font-size:21px;font-weight:500;color:#26201A;font-family:Georgia,serif}
+.hv-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.hv-tile{background:#FFFDF8;border:.5px solid #ECE1CF;border-radius:13px;padding:12px 13px}
+.hv-tile .n{font-size:25px;font-weight:500;color:#26201A;font-family:Georgia,serif;line-height:1}
+.hv-tile .l{font-size:10.5px;color:#6B6051;margin-top:6px}
+.hv-card{background:#FFFDF8;border:.5px solid #ECE1CF;border-radius:14px;padding:14px 16px}
+.hv-lab{font-size:10px;letter-spacing:.4px;text-transform:uppercase;color:#6B6051;font-weight:500;margin:0}
+.hv-cardhead{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:11px}
+.hv-cardhead .r{font-size:11px;color:#95876F;text-align:right;line-height:1.5}
+.hv-hm{display:grid;grid-template-columns:repeat(26,1fr);gap:3px}
+.hv-hmc{aspect-ratio:1;border-radius:2px;background:#EFE6D6}
+.hv-leg{display:flex;align-items:center;gap:5px;font-size:10.5px;color:#95876F;margin-top:9px}
+.hv-legc{width:10px;height:10px;border-radius:2px}
+.hv-cols{display:grid;grid-template-columns:1.7fr 1fr;gap:11px;align-items:stretch}
+.hv-debt{font-size:12px;color:#6B6051;line-height:1.55}
+.hv-ok{color:#5E7A4A;margin-top:9px;font-size:12px}
+.hv-ghost{font-size:11.5px;padding:6px 12px;border-radius:9px;border:.5px solid #E2D6C2;color:#6B6051;background:#FFFDF8}
+.hv-ringwrap{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;height:100%}
+.hv-curve{font-size:11.5px;color:#95876F;margin:0 0 8px;line-height:1.5}
+</style>
+<div class="hv">
+  <aside class="hv-side">
+    <div class="hv-brand"><i class="ti ti-flame" style="color:#C75B39" aria-hidden="true"></i>Hearth</div>
+    <div class="hv-deck">Deck</div>
+    <div class="hv-deckbox">Default <i class="ti ti-chevron-down" aria-hidden="true"></i></div>
+    <div class="hv-nav"><i class="ti ti-home" aria-hidden="true"></i>Dashboard</div>
+    <div class="hv-nav"><i class="ti ti-book" aria-hidden="true"></i>Library</div>
+    <div class="hv-nav"><i class="ti ti-player-play" aria-hidden="true"></i>Study</div>
+    <div class="hv-nav on"><i class="ti ti-chart-bar" aria-hidden="true"></i>Stats</div>
+    <div class="hv-nav"><i class="ti ti-tag" aria-hidden="true"></i>Tags</div>
+    <div class="hv-nav"><i class="ti ti-settings" aria-hidden="true"></i>Settings</div>
+    <div class="hv-new"><i class="ti ti-plus" aria-hidden="true"></i>New Shard</div>
+  </aside>
+  <main class="hv-main">
+    <span class="hv-h1">Study stats</span>
+    <div class="hv-tiles">
+      <div class="hv-tile"><div class="n">1</div><div class="l">Current streak</div></div>
+      <div class="hv-tile"><div class="n">1</div><div class="l">Longest streak</div></div>
+      <div class="hv-tile"><div class="n">59</div><div class="l">Total reviews</div></div>
+      <div class="hv-tile"><div class="n">5</div><div class="l">Avg days to review</div></div>
+    </div>
+    <div class="hv-card">
+      <div class="hv-cardhead"><p class="hv-lab">Activity</p><span class="r">Today 35 · 7d 59 · 30d 59</span></div>
+      <div class="hv-hm" id="hm"></div>
+      <div class="hv-leg">Less <span class="hv-legc" style="background:#EFE6D6"></span><span class="hv-legc" style="background:#E9C9B8"></span><span class="hv-legc" style="background:#DC9067"></span><span class="hv-legc" style="background:#C75B39"></span> More</div>
+    </div>
+    <div class="hv-cols">
+      <div class="hv-card">
+        <div class="hv-cardhead"><p class="hv-lab">Card debt — 0 cards past due</p><span class="hv-ghost">Study all</span></div>
+        <div class="hv-debt">A few shards have cooled — time has passed since they were due. Nothing’s lost, and nothing changes on its own. Review when you’re ready, or reset a card to re-introduce it gently.</div>
+        <div class="hv-ok"><i class="ti ti-check" aria-hidden="true"></i> All caught up — nothing has cooled.</div>
+      </div>
+      <div class="hv-card">
+        <p class="hv-lab" style="margin-bottom:8px">Deck mastery</p>
+        <div class="hv-ringwrap">
+          <svg width="92" height="92" viewBox="0 0 92 92" aria-hidden="true">
+            <circle cx="46" cy="46" r="34" fill="none" stroke="#EFE6D6" stroke-width="10"/>
+            <circle cx="46" cy="46" r="34" fill="none" stroke="#C75B39" stroke-width="10" stroke-dasharray="68 146" transform="rotate(-90 46 46)" stroke-linecap="round"/>
+            <text x="46" y="43" text-anchor="middle" fill="#26201A" font-size="19" font-weight="500" font-family="Georgia,serif">32%</text>
+            <text x="46" y="57" text-anchor="middle" fill="#95876F" font-size="9">Default</text>
+          </svg>
+          <span style="font-size:11px;color:#95876F">38 cards</span>
+        </div>
+      </div>
+    </div>
+    <div class="hv-card">
+      <p class="hv-lab" style="margin-bottom:8px">Projected retention — current deck</p>
+      <p class="hv-curve">Average chance you’d still recall a card on a given day. Cards trend review-worthy in ~5 days.</p>
+      <svg width="100%" height="150" viewBox="0 0 520 150" preserveAspectRatio="none" aria-hidden="true">
+        <line x1="34" y1="28" x2="520" y2="28" stroke="#ECE1CF" stroke-width="1"/>
+        <line x1="34" y1="74" x2="520" y2="74" stroke="#ECE1CF" stroke-width="1"/>
+        <line x1="34" y1="120" x2="520" y2="120" stroke="#ECE1CF" stroke-width="1"/>
+        <path d="M34,20 C 90,70 150,108 280,122 C 380,131 460,133 520,134 L520,140 L34,140 Z" fill="#F2DED2"/>
+        <path d="M34,20 C 90,70 150,108 280,122 C 380,131 460,133 520,134" fill="none" stroke="#C75B39" stroke-width="2"/>
+        <text x="6" y="31" fill="#95876F" font-size="9">90%</text>
+        <text x="6" y="77" fill="#95876F" font-size="9">70%</text>
+        <text x="6" y="123" fill="#95876F" font-size="9">50%</text>
+      </svg>
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:#95876F;padding:0 4px"><span>0d</span><span>30d</span><span>60d</span></div>
+    </div>
+  </main>
+</div>
+<script>
+(function(){var hm=document.getElementById('hm');if(!hm)return;var cells=26*5;var html='';for(var i=0;i<cells;i++){var c='#EFE6D6';if(i===cells-21){c='#C75B39';}else if(i===cells-1){c='#C75B39';}html+='<span class="hv-hmc" style="background:'+c+'"></span>';}hm.innerHTML=html;})();
+</script>

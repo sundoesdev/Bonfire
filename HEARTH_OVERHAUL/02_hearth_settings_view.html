@@ -1,0 +1,87 @@
+<h2 style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Hearth Settings view redesign: the endless single-column scroll is split into tabbed sections, shown with the Appearance panel active and fully styled controls.</h2>
+<style>
+.hv{width:100%;border-radius:18px;overflow:hidden;background:#F1E9DA;color:#2C2620;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:grid;grid-template-columns:122px 1fr;min-height:540px}
+.hv *{box-sizing:border-box}
+.hv-side{background:#F8F2E7;border-right:.5px solid #ECE1CF;display:flex;flex-direction:column;gap:3px;padding:14px 10px}
+.hv-brand{display:flex;align-items:center;gap:6px;font-size:15px;font-weight:500;padding:2px 5px 11px;color:#1F1A15;font-family:Georgia,serif}
+.hv-deck{font-size:9.5px;letter-spacing:.4px;text-transform:uppercase;color:#95876F;padding:0 5px 3px}
+.hv-deckbox{display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-radius:9px;background:#FFFDF8;border:.5px solid #ECE1CF;font-size:11.5px;color:#6B6051;margin-bottom:9px}
+.hv-nav{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:9px;font-size:12px;color:#6B6051}
+.hv-nav i{font-size:15px}
+.hv-nav.on{background:#F2DCCF;color:#9A3F22;font-weight:500}
+.hv-new{margin-top:auto;display:flex;align-items:center;justify-content:center;gap:5px;padding:8px;border-radius:10px;font-size:12px;font-weight:500;color:#fff;background:#C75B39}
+.hv-main{padding:16px;display:flex;flex-direction:column;gap:13px;min-width:0}
+.hv-h1{font-size:21px;font-weight:500;color:#26201A;font-family:Georgia,serif}
+.hv-tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:.5px solid #ECE1CF;padding-bottom:2px}
+.hv-tab{padding:7px 12px;border-radius:9px 9px 0 0;font-size:12px;color:#6B6051}
+.hv-tab.on{color:#9A3F22;font-weight:500;background:#FFFDF8;border:.5px solid #ECE1CF;border-bottom-color:#FFFDF8;margin-bottom:-3px}
+.hv-tab i{font-size:14px;margin-right:5px}
+.hv-card{background:#FFFDF8;border:.5px solid #ECE1CF;border-radius:14px;padding:16px}
+.hv-lab{font-size:10px;letter-spacing:.4px;text-transform:uppercase;color:#6B6051;font-weight:500;margin:0 0 12px}
+.hv-frow{display:flex;align-items:center;gap:14px;padding:11px 0;border-top:.5px solid #ECE1CF}
+.hv-frow:first-of-type{border-top:none;padding-top:0}
+.hv-fname{width:120px}
+.hv-fname .t{font-size:13px;color:#2C2620}
+.hv-fname .d{font-size:11px;color:#95876F;margin-top:2px}
+.hv-grow{flex:1;display:flex;justify-content:flex-end}
+.hv-seg{display:inline-flex;background:#EFE6D6;border-radius:10px;padding:3px;gap:3px}
+.hv-segi{display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border-radius:8px;font-size:12px;color:#6B6051}
+.hv-segi.on{background:#FFFDF8;color:#2C2620;font-weight:500}
+.hv-swatch{width:14px;height:14px;border-radius:4px;border:.5px solid rgba(0,0,0,.12)}
+.hv-sel{display:inline-flex;align-items:center;justify-content:space-between;gap:18px;padding:8px 11px;border-radius:9px;border:.5px solid #E2D6C2;background:#FFFDF8;color:#2C2620;font-size:12.5px;min-width:190px}
+.hv-sel i{color:#95876F;font-size:14px}
+.hv-sw{width:36px;height:21px;border-radius:999px;background:#C75B39;position:relative;flex-shrink:0}
+.hv-sw::after{content:"";position:absolute;top:2px;left:17px;width:17px;height:17px;border-radius:50%;background:#fff}
+.hv-hint{font-size:11.5px;color:#95876F;margin:13px 0 0;line-height:1.5}
+</style>
+<div class="hv">
+  <aside class="hv-side">
+    <div class="hv-brand"><i class="ti ti-flame" style="color:#C75B39" aria-hidden="true"></i>Hearth</div>
+    <div class="hv-deck">Deck</div>
+    <div class="hv-deckbox">Default <i class="ti ti-chevron-down" aria-hidden="true"></i></div>
+    <div class="hv-nav"><i class="ti ti-home" aria-hidden="true"></i>Dashboard</div>
+    <div class="hv-nav"><i class="ti ti-book" aria-hidden="true"></i>Library</div>
+    <div class="hv-nav"><i class="ti ti-player-play" aria-hidden="true"></i>Study</div>
+    <div class="hv-nav"><i class="ti ti-chart-bar" aria-hidden="true"></i>Stats</div>
+    <div class="hv-nav"><i class="ti ti-tag" aria-hidden="true"></i>Tags</div>
+    <div class="hv-nav on"><i class="ti ti-settings" aria-hidden="true"></i>Settings</div>
+    <div class="hv-new"><i class="ti ti-plus" aria-hidden="true"></i>New Shard</div>
+  </aside>
+  <main class="hv-main">
+    <span class="hv-h1">Settings</span>
+    <div class="hv-tabs">
+      <span class="hv-tab on"><i class="ti ti-palette" aria-hidden="true"></i>Appearance</span>
+      <span class="hv-tab"><i class="ti ti-player-play" aria-hidden="true"></i>Study</span>
+      <span class="hv-tab"><i class="ti ti-stack-2" aria-hidden="true"></i>Decks</span>
+      <span class="hv-tab"><i class="ti ti-clock" aria-hidden="true"></i>Scheduling</span>
+      <span class="hv-tab"><i class="ti ti-template" aria-hidden="true"></i>Templates</span>
+      <span class="hv-tab"><i class="ti ti-database" aria-hidden="true"></i>Data</span>
+      <span class="hv-tab"><i class="ti ti-shield-check" aria-hidden="true"></i>Integrity</span>
+    </div>
+    <div class="hv-card">
+      <p class="hv-lab">Theme &amp; interface</p>
+      <div class="hv-frow">
+        <div class="hv-fname"><div class="t">Theme</div><div class="d">Warm light or coal dark</div></div>
+        <div class="hv-grow">
+          <div class="hv-seg">
+            <span class="hv-segi on"><span class="hv-swatch" style="background:#F1E9DA"></span>Light</span>
+            <span class="hv-segi"><span class="hv-swatch" style="background:#1B1917"></span>Dark</span>
+          </div>
+        </div>
+      </div>
+      <div class="hv-frow">
+        <div class="hv-fname"><div class="t">Follow system</div><div class="d">Match your OS setting</div></div>
+        <div class="hv-grow"><span class="hv-sw" role="switch" aria-checked="true" aria-label="Follow system theme"></span></div>
+      </div>
+      <div class="hv-frow">
+        <div class="hv-fname"><div class="t">UI font</div><div class="d">Headings stay serif</div></div>
+        <div class="hv-grow"><span class="hv-sel">Inter / System <i class="ti ti-chevron-down" aria-hidden="true"></i></span></div>
+      </div>
+      <div class="hv-frow">
+        <div class="hv-fname"><div class="t">UI scale</div><div class="d">Zoom the interface</div></div>
+        <div class="hv-grow"><span class="hv-sel">100% <i class="ti ti-chevron-down" aria-hidden="true"></i></span></div>
+      </div>
+      <p class="hv-hint">Each tab holds one focused group — no more endless scroll. The 36-language session filter becomes a searchable chip picker under Study, and destructive actions live alone under Data.</p>
+    </div>
+  </main>
+</div>

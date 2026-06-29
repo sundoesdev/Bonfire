@@ -1,0 +1,74 @@
+<h2 style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Hearth Library view redesign: a calm filter bar, a contextual bulk-action bar, and quiet scannable shard rows.</h2>
+<style>
+.hv{width:100%;border-radius:18px;overflow:hidden;background:#F1E9DA;color:#2C2620;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:grid;grid-template-columns:122px 1fr;min-height:540px}
+.hv *{box-sizing:border-box}
+.hv-side{background:#F8F2E7;border-right:.5px solid #ECE1CF;display:flex;flex-direction:column;gap:3px;padding:14px 10px}
+.hv-brand{display:flex;align-items:center;gap:6px;font-size:15px;font-weight:500;padding:2px 5px 11px;color:#1F1A15;font-family:Georgia,serif}
+.hv-deck{font-size:9.5px;letter-spacing:.4px;text-transform:uppercase;color:#95876F;padding:0 5px 3px}
+.hv-deckbox{display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-radius:9px;background:#FFFDF8;border:.5px solid #ECE1CF;font-size:11.5px;color:#6B6051;margin-bottom:9px}
+.hv-nav{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:9px;font-size:12px;color:#6B6051}
+.hv-nav i{font-size:15px}
+.hv-nav.on{background:#F2DCCF;color:#9A3F22;font-weight:500}
+.hv-new{margin-top:auto;display:flex;align-items:center;justify-content:center;gap:5px;padding:8px;border-radius:10px;font-size:12px;font-weight:500;color:#fff;background:#C75B39}
+.hv-main{padding:16px;display:flex;flex-direction:column;gap:11px;min-width:0}
+.hv-top{display:flex;gap:9px}
+.hv-search{flex:1;display:flex;align-items:center;gap:8px;padding:9px 13px;border-radius:10px;border:.5px solid #E2D6C2;background:#FFFDF8;color:#95876F;font-size:13px;min-width:0}
+.hv-primary{background:#C75B39;color:#fff;border-radius:10px;padding:9px 15px;font-size:12.5px;font-weight:500;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.hv-fils{display:flex;gap:7px;flex-wrap:wrap}
+.hv-fil{display:inline-flex;align-items:center;gap:8px;padding:7px 11px;border-radius:9px;border:.5px solid #E2D6C2;background:#FFFDF8;color:#6B6051;font-size:11.5px}
+.hv-fil i{font-size:13px;color:#95876F}
+.hv-bulk{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#F2DCCF;border:.5px solid #E6C3B2;border-radius:11px;font-size:12px;color:#9A3F22}
+.hv-bbtn{padding:5px 11px;border-radius:8px;border:.5px solid #E6C3B2;background:#FFFDF8;color:#6B6051;font-size:11.5px}
+.hv-bbtn.dgr{color:#B23A2E;border-color:#E8C9C2}
+.hv-row{display:flex;align-items:center;gap:11px;padding:9px 8px;border-bottom:.5px solid #ECE1CF;font-size:13.5px}
+.hv-row.sel{background:#FBF1E6;border-radius:8px}
+.hv-cb{width:15px;height:15px;border-radius:4px;border:1.5px solid #C2B5A0;background:#FFFDF8;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.hv-cb.on{background:#C75B39;border-color:#C75B39;color:#fff;font-size:10px}
+.hv-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.hv-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hv-pill{display:inline-flex;align-items:center;gap:5px;background:#EFE6D6;color:#6B6051;border-radius:999px;font-size:10.5px;padding:2px 9px;white-space:nowrap}
+.hv-ghost{font-size:11px;padding:4px 11px;border-radius:8px;border:.5px solid #E2D6C2;color:#6B6051;background:#FFFDF8}
+</style>
+<div class="hv">
+  <aside class="hv-side">
+    <div class="hv-brand"><i class="ti ti-flame" style="color:#C75B39" aria-hidden="true"></i>Hearth</div>
+    <div class="hv-deck">Deck</div>
+    <div class="hv-deckbox">Default <i class="ti ti-chevron-down" aria-hidden="true"></i></div>
+    <div class="hv-nav"><i class="ti ti-home" aria-hidden="true"></i>Dashboard</div>
+    <div class="hv-nav on"><i class="ti ti-book" aria-hidden="true"></i>Library</div>
+    <div class="hv-nav"><i class="ti ti-player-play" aria-hidden="true"></i>Study</div>
+    <div class="hv-nav"><i class="ti ti-chart-bar" aria-hidden="true"></i>Stats</div>
+    <div class="hv-nav"><i class="ti ti-tag" aria-hidden="true"></i>Tags</div>
+    <div class="hv-nav"><i class="ti ti-settings" aria-hidden="true"></i>Settings</div>
+    <div class="hv-new"><i class="ti ti-plus" aria-hidden="true"></i>New Shard</div>
+  </aside>
+  <main class="hv-main">
+    <div class="hv-top">
+      <div class="hv-search"><i class="ti ti-search" aria-hidden="true"></i>Search shards — title, language, code, tags</div>
+      <span class="hv-primary"><i class="ti ti-plus" aria-hidden="true"></i>New</span>
+    </div>
+    <div class="hv-fils">
+      <span class="hv-fil">All languages <i class="ti ti-chevron-down" aria-hidden="true"></i></span>
+      <span class="hv-fil">All categories <i class="ti ti-chevron-down" aria-hidden="true"></i></span>
+      <span class="hv-fil">All familiarity <i class="ti ti-chevron-down" aria-hidden="true"></i></span>
+      <span class="hv-fil">All tags <i class="ti ti-chevron-down" aria-hidden="true"></i></span>
+      <span class="hv-fil" style="margin-left:auto"><i class="ti ti-arrows-sort" aria-hidden="true"></i>Recently modified</span>
+    </div>
+    <div class="hv-bulk">
+      <i class="ti ti-check" aria-hidden="true"></i>2 selected
+      <span style="flex:1"></span>
+      <span class="hv-bbtn">Edit field</span>
+      <span class="hv-bbtn">Add to deck</span>
+      <span class="hv-bbtn dgr">Delete</span>
+    </div>
+    <div>
+      <div class="hv-row sel"><span class="hv-cb on"><i class="ti ti-check" aria-hidden="true"></i></span><span class="hv-dot" style="background:#6F9070"></span><span class="hv-title">Symlink Soft</span><span class="hv-pill">foundation</span><span class="hv-pill"><span class="hv-dot" style="width:6px;height:6px;background:#6F9070"></span>beginner</span><span style="color:#95876F;font-size:11.5px">Shell</span><span class="hv-ghost">Review</span></div>
+      <div class="hv-row sel"><span class="hv-cb on"><i class="ti ti-check" aria-hidden="true"></i></span><span class="hv-dot" style="background:#C75B39"></span><span class="hv-title">Meta Description</span><span class="hv-pill"><span class="hv-dot" style="width:6px;height:6px;background:#6F9070"></span>beginner</span><span style="color:#95876F;font-size:11.5px">WebDev</span><span class="hv-ghost">Review</span></div>
+      <div class="hv-row"><span class="hv-cb"></span><span class="hv-dot" style="background:#C75B39"></span><span class="hv-title">Video Element</span><span class="hv-pill"><span class="hv-dot" style="width:6px;height:6px;background:#6F9070"></span>beginner</span><span style="color:#95876F;font-size:11.5px">WebDev</span><span class="hv-ghost">Review</span></div>
+      <div class="hv-row"><span class="hv-cb"></span><span class="hv-dot" style="background:#C75B39"></span><span class="hv-title">Div Box</span><span class="hv-pill"><span class="hv-dot" style="width:6px;height:6px;background:#3E6E8C"></span>intermediate</span><span style="color:#95876F;font-size:11.5px">WebDev</span><span class="hv-ghost">Review</span></div>
+      <div class="hv-row"><span class="hv-cb"></span><span class="hv-dot" style="background:#C75B39"></span><span class="hv-title">JS to HTML Element via CSS Selector</span><span class="hv-pill"><span class="hv-dot" style="width:6px;height:6px;background:#3E6E8C"></span>intermediate</span><span style="color:#95876F;font-size:11.5px">WebDev</span><span class="hv-ghost">Review</span></div>
+      <div class="hv-row"><span class="hv-cb"></span><span class="hv-dot" style="background:#C75B39"></span><span class="hv-title">favicon.ico</span><span class="hv-pill"><span class="hv-dot" style="width:6px;height:6px;background:#6F9070"></span>beginner</span><span style="color:#95876F;font-size:11.5px">WebDev</span><span class="hv-ghost">Review</span></div>
+      <div class="hv-row" style="border-bottom:none"><span class="hv-cb"></span><span class="hv-dot" style="background:#6F9070"></span><span class="hv-title">Make Chain Directory</span><span class="hv-pill"><span class="hv-dot" style="width:6px;height:6px;background:#6F9070"></span>beginner</span><span style="color:#95876F;font-size:11.5px">Shell</span><span class="hv-ghost">Review</span></div>
+    </div>
+  </main>
+</div>

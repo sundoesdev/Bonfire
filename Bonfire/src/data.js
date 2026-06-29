@@ -1,7 +1,7 @@
 // Shared import/export helpers (used by Dashboard and Settings).
 
 export async function exportVault(ctx) {
-  const path = await ctx.api.saveDialog("bonfire-export.json");
+  const path = await ctx.api.saveDialog("hearth-export.json");
   if (!path) return;
   await ctx.api.exportToJson(path);
   ctx.toast("Vault exported");
