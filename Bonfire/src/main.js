@@ -1,10 +1,11 @@
 // App entry: holds shared state, wires the sidebar + global shortcuts, and
 // renders the active view into #view. View modules export render(container, ctx, params).
 import * as api from "./api.js";
-import { DEFAULT_LANGUAGES, DEFAULT_DECK_ID, ALL_DECKS, presetConfig } from "./constants.js";
+import { DEFAULT_LANGUAGES, ALL_DECKS, presetConfig } from "./constants.js";
 import { renderDashboard } from "./views/dashboard.js";
 import { renderLibrary } from "./views/library.js";
 import { renderStudy } from "./views/study.js";
+import { renderPlaybooks } from "./views/playbooks.js";
 import { renderTags } from "./views/tags.js";
 import { renderStats } from "./views/stats.js";
 import { renderSettings } from "./views/settings.js";
@@ -20,16 +21,23 @@ const DECK_KEY = "current_deck";
 
 const state = {
   allShards: [], // every card, across all decks
-  shards: [], // cards in the current deck (what the views read)
+  shards: [], // the whole library too — decks are filters now, not scopes (views read this)
   customLanguages: [],
   decks: [],
-  currentDeckId: DEFAULT_DECK_ID,
+  // The active *library deck filter* (a filter, never a scope): ALL_DECKS shows the
+  // whole library. Persisted in `current_deck`; the Library's own deck filter + the
+  // sidebar "Filter" switcher both drive it.
+  currentDeckId: ALL_DECKS,
+  // Ids of cards referenced by any playbook (for the "exclude playbook cards from
+  // study" toggle). Populated on each refresh.
+  playbookCardIds: new Set(),
 };
 
 const VIEWS = {
   dashboard: renderDashboard,
   library: renderLibrary,
   study: renderStudy,
+  playbooks: renderPlaybooks,
   tags: renderTags,
   stats: renderStats,
   settings: renderSettings,
@@ -48,27 +56,26 @@ async function refreshShards() {
   } catch (_e) {
     /* non-fatal — fall back to whatever's stored */
   }
-  const [shards, custom, decks] = await Promise.all([
+  const [shards, custom, decks, pbCardIds] = await Promise.all([
     api.listShards(),
     api.listCustomLanguages(),
     api.listDecks(),
+    api.playbookCardIds().catch(() => []),
   ]);
   state.allShards = shards;
   state.customLanguages = custom;
   state.decks = decks;
+  state.playbookCardIds = new Set(pbCardIds || []);
 
-  // Fall back to the default deck if the remembered one no longer exists ("All
-  // decks" is a valid pseudo-deck, not a real row, so it's exempt).
+  // Decks are filters now, not scopes: the whole library is always visible. If the
+  // remembered deck filter points at a deck that no longer exists, fall back to
+  // showing everything ("All decks").
   if (state.currentDeckId !== ALL_DECKS && !decks.some((d) => d.id === state.currentDeckId)) {
-    state.currentDeckId = decks.some((d) => d.id === DEFAULT_DECK_ID)
-      ? DEFAULT_DECK_ID
-      : decks[0]?.id || DEFAULT_DECK_ID;
+    state.currentDeckId = ALL_DECKS;
   }
-  // "All decks" shows every card regardless of membership (the full library).
-  state.shards =
-    state.currentDeckId === ALL_DECKS
-      ? shards
-      : shards.filter((s) => (s.deckIds || []).includes(state.currentDeckId));
+  // The view-facing list is the entire library; each view applies its own deck
+  // filter (the Library) or ignores decks (Dashboard/Stats) as appropriate.
+  state.shards = shards;
   populateDeckSwitcher();
 }
 
@@ -151,19 +158,18 @@ const ctx = {
   openShard: (id) => openCardModal(ctx, { id }),
   newShard: () => openQuickCapture(ctx),
   startStudy: () => navigate("study"),
-  // Daily quick-start (Ctrl+D) studies the deck marked as the daily default in
-  // Settings → Decks, if one is set; otherwise it uses the current deck.
+  // Daily quick-start (Ctrl+D) focuses the deck marked as the daily default in
+  // Settings → Decks, if one is set; otherwise the active library filter. Passed as
+  // a param so it seeds the session's focus deck WITHOUT mutating the global filter.
   quickStudy: async () => {
+    let deckId = state.currentDeckId;
     try {
       const daily = await api.getSetting("daily_deck");
-      if (daily && state.decks.some((d) => d.id === daily)) {
-        state.currentDeckId = daily;
-        await api.setSetting(DECK_KEY, daily);
-      }
+      if (daily && state.decks.some((d) => d.id === daily)) deckId = daily;
     } catch (_e) {
-      /* fall back to the current deck */
+      /* fall back to the active filter */
     }
-    navigate("study", { quick: true });
+    navigate("study", { quick: true, deckId });
   },
   weakStudy: () => navigate("study", { weak: true }),
   reviewCard: (id) => navigate("study", { single: id }),
@@ -212,7 +218,15 @@ window.addEventListener("DOMContentLoaded", async () => {
       await guardStudy();
       return;
     }
-    setDeck(deckSwitcher.value);
+    // The sidebar switcher is a Library filter: set it and land on the Library so
+    // the effect is visible. It never hides cards on other views.
+    state.currentDeckId = deckSwitcher.value;
+    try {
+      await api.setSetting(DECK_KEY, deckSwitcher.value);
+    } catch (_e) {
+      /* ignore persistence failures */
+    }
+    navigate("library");
   });
 
   document.querySelectorAll("#sidebar nav button").forEach((b) => {

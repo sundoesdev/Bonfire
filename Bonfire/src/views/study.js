@@ -1,13 +1,17 @@
 // Study: active-recall testing. A configurable, editable, due-first queue of cards;
 // each card shows a question, you type an answer, reveal + compare, then self-grade (SM-2).
 import { el, esc, langBadge, metaBadges, isDue, enableTab, todayStr } from "../dom.js";
-import { DIFFICULTIES, FAMILIARITY_ORDER, getDifficulty, isFoundation, isRevealOnly, cmMode } from "../constants.js";
+import { DIFFICULTIES, FAMILIARITY_ORDER, ALL_DECKS, getDifficulty, isFoundation, isRevealOnly, cmMode } from "../constants.js";
 import { highlightInto } from "../highlight.js";
 import { mdLite } from "../markdown.js";
 import { confirmDialog } from "../components/confirm.js";
 
 // Whether the CodeMirror answer editor starts in VIM mode (persisted `editor_vim`).
 let vimEnabled = false;
+
+// Card ids referenced by any playbook — used to drop them from normal study when the
+// "exclude playbook cards" toggle is on. Set at the top of renderStudy each time.
+let playbookIds = new Set();
 
 // Markup for a card's attachments on one side ("question" or "answer").
 function mediaHtml(media, side) {
@@ -73,6 +77,8 @@ export const DEFAULT_CONFIG = {
   includeTags: [], // card must have all of these
   excludeTags: [], // card must have none of these
   cram: false, // ignore due dates, draw from whole matching set
+  shuffle: true, // randomize the queue each session (so quitting midway varies the set)
+  excludePlaybook: false, // skip cards that belong to a playbook (studied via the playbook)
   showPreview: true, // quick-start lands on the editable preview first
   limitNew: false, // cap brand-new cards introduced per day
   newPerDay: 20,
@@ -124,6 +130,7 @@ export const saveConfig = (ctx, cfg) => ctx.api.setSetting(CONFIG_KEY, JSON.stri
 // Cards matching the config's filters.
 function matchingCards(shards, cfg) {
   return shards.filter((s) => {
+    if (cfg.excludePlaybook && playbookIds.has(s.id)) return false;
     const tags = s.tags || [];
     if (cfg.languages.length && !cfg.languages.includes(s.language)) return false;
     if (cfg.difficulties.length && !cfg.difficulties.includes(getDifficulty(tags))) return false;
@@ -138,6 +145,15 @@ const diffRank = (s) => {
   const i = DIFFICULTIES.indexOf(getDifficulty(s.tags));
   return i === -1 ? 99 : i;
 };
+
+// Fisher–Yates shuffle in place (returns the same array).
+function shuffleInPlace(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
 
 // The session queue. Strict SM-2 by default: ONLY cards that are due, most overdue
 // first. Cram mode ignores due dates and practices the whole matching set.
@@ -154,15 +170,20 @@ function buildQueue(shards, cfg, progress) {
   let ordered;
   if (cfg.cram) {
     // Cram ignores both due dates and the daily caps.
-    ordered = [...matches].sort(
-      (a, b) => diffRank(a) - diffRank(b) || (a.title || "").localeCompare(b.title || "")
-    );
+    ordered = [...matches];
+    if (cfg.shuffle)
+      shuffleInPlace(ordered);
+    else
+      ordered.sort((a, b) => diffRank(a) - diffRank(b) || (a.title || "").localeCompare(b.title || ""));
     return ordered.slice(0, queueCap(cfg, ordered.length));
   }
 
-  const due = matches
-    .filter(isDue)
-    .sort((a, b) => (a.reviewNext || "").localeCompare(b.reviewNext || ""));
+  // Due cards. Shuffle before the cap so a capped session draws a varied subset each
+  // time (quit at card 10 and next time you see different cards, not the same 10);
+  // otherwise fall back to most-overdue-first.
+  const due = matches.filter(isDue);
+  if (cfg.shuffle) shuffleInPlace(due);
+  else due.sort((a, b) => (a.reviewNext || "").localeCompare(b.reviewNext || ""));
 
   // Apply per-day caps, accounting for what's already been studied today.
   let allowedNew = Infinity;
@@ -194,7 +215,11 @@ function buildWeakQueue(shards, cfg) {
       (a.reviewEase || 2.5) - (b.reviewEase || 2.5) ||
       diffRank(a) - diffRank(b)
   );
-  return ordered.slice(0, Math.max(1, cfg.maxCards || ordered.length));
+  // Pick the weakest N by the ranking above, then (if shuffling) randomize just the
+  // presentation order of that selected set.
+  const picked = ordered.slice(0, Math.max(1, cfg.maxCards || ordered.length));
+  if (cfg.shuffle) shuffleInPlace(picked);
+  return picked;
 }
 
 // ---------- Shared config form (used by setup screen + Settings) ----------
@@ -277,6 +302,14 @@ export function buildStudyConfigForm(ctx, cfg, opts = {}) {
         <div style="margin-bottom:8px">
           <button type="button" class="btn btn-toggle ${cfg.cram ? "on" : ""}" id="c-cram">Cram mode</button>
           <div class="muted" style="margin-top:6px">Practice the whole set, ignoring due dates. Cram never changes a card's schedule, but still counts toward your heatmap and streak.</div>
+        </div>
+        <div style="margin-bottom:8px">
+          <button type="button" class="btn btn-toggle ${cfg.shuffle ? "on" : ""}" id="c-shuffle">Shuffle order</button>
+          <div class="muted" style="margin-top:6px">Randomize the queue each session, so if you stop midway you get a fresh mix next time instead of the same opening cards.</div>
+        </div>
+        <div style="margin-bottom:8px">
+          <button type="button" class="btn btn-toggle ${cfg.excludePlaybook ? "on" : ""}" id="c-exclude-pb">Exclude playbook cards</button>
+          <div class="muted" style="margin-top:6px">Skip cards that belong to a playbook during normal study (you follow those via their playbook instead). It never hides them from your library.</div>
         </div>
         ${
           showPreviewToggle
@@ -366,6 +399,8 @@ export function buildStudyConfigForm(ctx, cfg, opts = {}) {
     timeLimitMinutes: parseInt(timeInput.value, 10) || 0,
     maxCards: parseInt(maxInput.value, 10) || 0,
     cram: node.querySelector("#c-cram").classList.contains("on"),
+    shuffle: node.querySelector("#c-shuffle").classList.contains("on"),
+    excludePlaybook: node.querySelector("#c-exclude-pb").classList.contains("on"),
     showPreview: showPreviewToggle ? node.querySelector("#c-preview").classList.contains("on") : cfg.showPreview,
     limitNew: showCaps ? node.querySelector("#c-limitnew").checked : cfg.limitNew,
     newPerDay: showCaps ? parseInt(node.querySelector("#c-newper").value, 10) || 0 : cfg.newPerDay,
@@ -382,6 +417,7 @@ export function buildStudyConfigForm(ctx, cfg, opts = {}) {
 
 export async function renderStudy(container, ctx, params = {}) {
   const cfg = await loadConfig(ctx);
+  playbookIds = ctx.state.playbookCardIds || new Set();
   try {
     vimEnabled = (await ctx.api.getSetting("editor_vim")) === "true";
   } catch (_e) {
@@ -421,26 +457,33 @@ export async function renderStudy(container, ctx, params = {}) {
 
   // Weak-spot drill: practice the shakiest cards regardless of due date.
   if (params.weak) {
-    const queue = buildWeakQueue(ctx.state.shards, cfg);
+    const queue = buildWeakQueue(ctx.state.allShards, cfg);
     if (!queue.length) {
-      renderSetup(container, ctx, cfg, "No cards to drill in this deck yet.");
+      renderSetup(container, ctx, cfg, "No cards to drill yet.");
       return;
     }
-    if (cfg.showPreview) renderPreview(container, ctx, cfg, queue, ctx.state.shards);
-    else runSession(container, ctx, cfg, queue, { pool: ctx.state.shards });
+    if (cfg.showPreview) renderPreview(container, ctx, cfg, queue, ctx.state.allShards);
+    else runSession(container, ctx, cfg, queue, { pool: ctx.state.allShards });
     return;
   }
 
-  // Quick-start: build queue now, then preview or straight into the session.
+  // Quick-start (Ctrl+D): focus the daily/active deck's due cards first, holding the
+  // rest of the library's due cards for the "continue to the rest" prompt at the end.
   if (params.quick) {
+    const focusId = params.deckId;
+    const focused = focusId && focusId !== ALL_DECKS;
+    const pool = focused
+      ? ctx.state.allShards.filter((s) => (s.deckIds || []).includes(focusId))
+      : ctx.state.allShards;
+    const rest = focused ? ctx.state.allShards.filter((s) => !(s.deckIds || []).includes(focusId)) : [];
     const progress = await loadProgress(ctx);
-    const queue = buildQueue(ctx.state.shards, cfg, progress);
+    const queue = buildQueue(pool, cfg, progress);
     if (!queue.length) {
       renderSetup(container, ctx, cfg, "No cards are due right now. Turn on Cram mode to practice anyway.");
       return;
     }
-    if (cfg.showPreview) renderPreview(container, ctx, cfg, queue, ctx.state.shards);
-    else runSession(container, ctx, cfg, queue, { pool: ctx.state.shards });
+    if (cfg.showPreview) renderPreview(container, ctx, cfg, queue, pool, rest);
+    else runSession(container, ctx, cfg, queue, { pool, restPool: rest });
     return;
   }
 
@@ -493,7 +536,17 @@ function renderSetup(container, ctx, cfg, notice) {
   root.querySelector("#form-slot").appendChild(form.node);
 
   const deckSel = root.querySelector("#study-deck");
-  const studyPool = () => (deckSel.value === "__all__" ? ctx.state.allShards : ctx.state.shards);
+  // Decks are filters, not scopes: derive the study pool by filtering the whole
+  // library on the picked deck (no global re-scope). `restPool` is everything else,
+  // held for the "continue to the rest of your cards" prompt when the deck is done.
+  const studyPool = () =>
+    deckSel.value === "__all__"
+      ? ctx.state.allShards
+      : ctx.state.allShards.filter((s) => (s.deckIds || []).includes(deckSel.value));
+  const restPool = () =>
+    deckSel.value === "__all__"
+      ? []
+      : ctx.state.allShards.filter((s) => !(s.deckIds || []).includes(deckSel.value));
 
   // Live session preview: queue size + summary, recomputed as the form changes.
   const prevCount = root.querySelector("#prev-count");
@@ -515,16 +568,9 @@ function renderSetup(container, ctx, cfg, notice) {
   form.node.addEventListener("input", refreshPreview);
   form.node.addEventListener("change", refreshPreview);
 
-  // Switching to a specific (different) deck re-scopes the whole view; "All decks"
-  // is handled at build time by drawing from allShards.
-  deckSel.addEventListener("change", () => {
-    const v = deckSel.value;
-    if (v !== "__all__" && v !== ctx.currentDeckId()) {
-      ctx.setDeck(v); // re-renders the view
-      return;
-    }
-    refreshPreview();
-  });
+  // The deck picker is local to this session (it never re-scopes the app): just
+  // recompute the live preview from the newly selected pool.
+  deckSel.addEventListener("change", refreshPreview);
 
   // Show which scheduling algorithm is active (set in Settings → Spaced repetition).
   ctx.api
@@ -557,7 +603,7 @@ function renderSetup(container, ctx, cfg, notice) {
       renderSetup(container, ctx, next, "No cards match — nothing due (try Cram mode), daily caps reached, or loosen filters.");
       return;
     }
-    renderPreview(container, ctx, next, queue, pool);
+    renderPreview(container, ctx, next, queue, pool, restPool());
   });
 
   container.innerHTML = "";
@@ -566,8 +612,9 @@ function renderSetup(container, ctx, cfg, notice) {
 }
 
 // ---------- Editable queue preview ----------
-// `pool` is the matching universe (for the timed Cram continuation offer).
-function renderPreview(container, ctx, cfg, queue, pool) {
+// `pool` is the matching universe (for the timed Cram continuation offer); `restPool`
+// is the rest of the library's cards (for the "continue to the rest" prompt).
+function renderPreview(container, ctx, cfg, queue, pool, restPool) {
   function draw() {
     const root = el(`
       <div>
@@ -649,7 +696,7 @@ function renderPreview(container, ctx, cfg, queue, pool) {
 
     root.querySelector("#back").addEventListener("click", () => renderSetup(container, ctx, cfg));
     root.querySelector("#start").addEventListener("click", () =>
-      runSession(container, ctx, cfg, queue, { pool: pool || queue })
+      runSession(container, ctx, cfg, queue, { pool: pool || queue, restPool })
     );
 
     container.innerHTML = "";
@@ -659,18 +706,21 @@ function renderPreview(container, ctx, cfg, queue, pool) {
 }
 
 // ---------- Running session ----------
-// opts: { single, onDone, pool }. `pool` is the matching universe the queue was
-// built from — used to offer a Cram continuation when a timed session clears all
-// due cards (item 7).
+// opts: { single, onDone, pool, restPool }. `pool` is the matching universe the queue
+// was built from — used to offer a Cram continuation when a timed session clears all
+// due cards (item 7). `restPool` is the rest of the library (cards outside the focused
+// deck) — used to offer "continue to the rest of your cards" when the deck is done.
 function runSession(container, ctx, cfg, queue, opts = {}) {
   // A session is timed only in "time" mode (and never for a single-card review).
   const timed = cfg.sessionMode === "time" && !opts.single;
   const limitMs = timed ? (cfg.timeLimitMinutes || 0) * 60000 : 0;
   const onDone = opts.onDone || (() => ctx.navigate("dashboard"));
   const pool = opts.pool || queue;
+  const restPool = opts.restPool || [];
   // Cram can be turned on mid-session by the end-of-time offer, so it's mutable.
   let cram = !!cfg.cram;
   let offeredCram = false;
+  let offeredRest = false;
 
   // Lock navigation away while a real (non single-card) session runs (item 6).
   // Also quiet the chrome (dim the sidebar) so the card is the focus field (§11).
@@ -733,9 +783,35 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
     container.appendChild(summary());
   }
 
-  // When the queue empties: in a timed, non-cram session with cards still left to
-  // practice, offer to keep going in Cram until time runs out (item 7).
+  // When the queue empties: first (for a deck-focused session) offer to continue to
+  // the rest of the library's due cards; then, for a timed non-cram session, offer
+  // to keep going in Cram until time runs out (item 7).
   function maybeFinish() {
+    // Deck complete → continue to the rest of your cards?
+    if (!offeredRest && restPool.length && !cram) {
+      offeredRest = true;
+      const studied = new Set(session.queue.map((s) => s.id));
+      const more = matchingCards(restPool, cfg)
+        .filter(isDue)
+        .filter((s) => !studied.has(s.id));
+      if (cfg.shuffle) shuffleInPlace(more);
+      if (more.length) {
+        confirmDialog({
+          title: "Deck complete — keep going?",
+          message: "You've finished this deck's due cards. Continue to the rest of your due cards?",
+          confirmLabel: "Continue",
+          cancelLabel: "Finish",
+        }).then((yes) => {
+          if (yes) {
+            session.queue.push(...more);
+            render();
+          } else {
+            finish();
+          }
+        });
+        return;
+      }
+    }
     if (offeredCram || !timed || cram) {
       finish();
       return;

@@ -18,6 +18,13 @@ export const listDecks = () => invoke("list_decks");
 export const saveDeck = (deck) => invoke("save_deck", { deck });
 export const deleteDeck = (id) => invoke("delete_deck", { id });
 export const syncDebtDeck = () => invoke("sync_debt_deck");
+// Playbooks: ordered, self-authored tutorials over existing cards (see playbooks.js).
+export const listPlaybooks = () => invoke("list_playbooks");
+export const getPlaybook = (id) => invoke("get_playbook", { id });
+export const savePlaybook = (playbook) => invoke("save_playbook", { playbook });
+export const deletePlaybook = (id) => invoke("delete_playbook", { id });
+export const savePlaybookNodes = (playbookId, nodes) => invoke("save_playbook_nodes", { playbookId, nodes });
+export const playbookCardIds = () => invoke("playbook_card_ids");
 export const submitReview = (id, rating, durationMs, sessionId, cram = false) =>
   invoke("submit_review", { id, rating, durationMs, sessionId, cram });
 export const reviewHistory = () => invoke("review_history");

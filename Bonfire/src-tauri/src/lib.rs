@@ -3,7 +3,7 @@ mod fsrs;
 mod models;
 mod sm2;
 
-use models::{DayCount, DayDetail, Deck, Shard, VaultExport};
+use models::{DayCount, DayDetail, Deck, Playbook, PlaybookDetail, PlaybookNode, Shard, VaultExport};
 use rusqlite::Connection;
 use std::sync::Mutex;
 use tauri::{Manager, State};
@@ -91,6 +91,63 @@ fn delete_deck(state: State<AppState>, id: String) -> Result<(), String> {
         return Err("The Debt deck cannot be deleted.".into());
     }
     with_conn(&state, |c| db::delete_deck(c, &id))
+}
+
+// ---------- Playbooks ----------
+
+#[tauri::command]
+fn list_playbooks(state: State<AppState>) -> Result<Vec<Playbook>, String> {
+    with_conn(&state, |c| db::all_playbooks(c))
+}
+
+/// A playbook plus its full node list (for the editor/runner), or None if missing.
+#[tauri::command]
+fn get_playbook(state: State<AppState>, id: String) -> Result<Option<PlaybookDetail>, String> {
+    with_conn(&state, |c| match db::get_playbook(c, &id)? {
+        Some(playbook) => {
+            let nodes = db::playbook_nodes(c, &id)?;
+            Ok(Some(PlaybookDetail { playbook, nodes }))
+        }
+        None => Ok(None),
+    })
+}
+
+/// Insert or update a playbook's metadata. A new playbook (empty id) gets an id +
+/// created_at; modified_at is always refreshed. Returns the persisted playbook.
+#[tauri::command]
+fn save_playbook(state: State<AppState>, mut playbook: Playbook) -> Result<Playbook, String> {
+    let now = now_iso();
+    if playbook.id.trim().is_empty() {
+        playbook.id = db::generate_id();
+        playbook.created_at = now.clone();
+    } else if playbook.created_at.is_empty() {
+        playbook.created_at = now.clone();
+    }
+    playbook.modified_at = now;
+    with_conn(&state, |c| db::save_playbook(c, &playbook))?;
+    Ok(playbook)
+}
+
+/// Delete a playbook + its nodes. Referenced cards are untouched (never owned).
+#[tauri::command]
+fn delete_playbook(state: State<AppState>, id: String) -> Result<(), String> {
+    with_conn(&state, |c| db::delete_playbook(c, &id))
+}
+
+/// Replace all of a playbook's nodes with the given tree (add/move/reorder/remove).
+#[tauri::command]
+fn save_playbook_nodes(
+    state: State<AppState>,
+    playbook_id: String,
+    nodes: Vec<PlaybookNode>,
+) -> Result<(), String> {
+    with_conn(&state, |c| db::save_playbook_nodes(c, &playbook_id, &nodes))
+}
+
+/// Every card id referenced by any playbook (for the exclude-from-study toggle).
+#[tauri::command]
+fn playbook_card_ids(state: State<AppState>) -> Result<Vec<String>, String> {
+    with_conn(&state, |c| db::playbook_card_ids(c))
 }
 
 /// Reconcile the Debt deck with the current overdue cards (item 5). Called by the
@@ -439,6 +496,12 @@ pub fn run() {
             list_decks,
             save_deck,
             delete_deck,
+            list_playbooks,
+            get_playbook,
+            save_playbook,
+            delete_playbook,
+            save_playbook_nodes,
+            playbook_card_ids,
             sync_debt_deck,
             submit_review,
             review_history,

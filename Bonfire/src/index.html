@@ -41,6 +41,8 @@
     <script src="/vendor/codemirror/addon/dialog/dialog.min.js"></script>
     <script src="/vendor/codemirror/addon/display/placeholder.min.js"></script>
     <script src="/vendor/codemirror/keymap/vim.min.js"></script>
+    <!-- Vendored Cytoscape.js (MIT, global `cytoscape`): the Playbook node-graph view. -->
+    <script src="/vendor/cytoscape/cytoscape.min.js"></script>
     <script type="module" src="/main.js"></script>
   </head>
 
@@ -50,13 +52,14 @@
         <div class="brand"><i class="ti ti-flame" aria-hidden="true"></i>Hearth</div>
         <button id="update-badge" class="update-badge" hidden>● Update available</button>
         <div class="deck-switch">
-          <label for="deck-switcher">Deck</label>
-          <select id="deck-switcher"></select>
+          <label for="deck-switcher">Filter</label>
+          <select id="deck-switcher" title="Filter the Library by deck — decks organize your cards but never hide them"></select>
         </div>
         <nav>
           <button data-view="dashboard"><i class="ti ti-home" aria-hidden="true"></i>Dashboard</button>
           <button data-view="library"><i class="ti ti-book" aria-hidden="true"></i>Library</button>
           <button data-view="study"><i class="ti ti-player-play" aria-hidden="true"></i>Study</button>
+          <button data-view="playbooks"><i class="ti ti-list-check" aria-hidden="true"></i>Playbooks</button>
           <button data-view="stats"><i class="ti ti-chart-bar" aria-hidden="true"></i>Stats</button>
           <button data-view="tags"><i class="ti ti-tag" aria-hidden="true"></i>Tags</button>
           <button data-view="settings"><i class="ti ti-settings" aria-hidden="true"></i>Settings</button>

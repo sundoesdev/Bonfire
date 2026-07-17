@@ -1,4 +1,6 @@
-use crate::models::{DayCount, DayDetail, DeckCount, Deck, ReviewLogEntry, Shard, VaultExport};
+use crate::models::{
+    DayCount, DayDetail, DeckCount, Deck, Playbook, PlaybookNode, ReviewLogEntry, Shard, VaultExport,
+};
 use rusqlite::{params, Connection, Result};
 use uuid::Uuid;
 
@@ -69,6 +71,21 @@ pub fn init(conn: &Connection) -> Result<()> {
             card_id TEXT NOT NULL,
             deck_id TEXT NOT NULL,
             PRIMARY KEY (card_id, deck_id)
+        );
+        CREATE TABLE IF NOT EXISTS playbooks (
+            id          TEXT PRIMARY KEY,
+            name        TEXT NOT NULL DEFAULT '',
+            description TEXT NOT NULL DEFAULT '',
+            position    INTEGER NOT NULL DEFAULT 0,
+            created_at  TEXT NOT NULL DEFAULT '',
+            modified_at TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS playbook_nodes (
+            id          TEXT PRIMARY KEY,
+            playbook_id TEXT NOT NULL DEFAULT '',
+            card_id     TEXT NOT NULL DEFAULT '',
+            parent_id   TEXT NOT NULL DEFAULT '',
+            position    INTEGER NOT NULL DEFAULT 0
         );",
     )?;
     migrate(conn)
@@ -641,6 +658,112 @@ pub fn all_review_log(conn: &Connection) -> Result<Vec<ReviewLogEntry>> {
     rows.collect()
 }
 
+// ---------- Playbooks (ordered, self-authored tutorials over existing cards) ----------
+
+fn row_to_playbook(row: &rusqlite::Row) -> Result<Playbook> {
+    Ok(Playbook {
+        id: row.get("id")?,
+        name: row.get("name")?,
+        description: row.get("description")?,
+        position: row.get("position")?,
+        created_at: row.get("created_at")?,
+        modified_at: row.get("modified_at")?,
+    })
+}
+
+fn row_to_playbook_node(row: &rusqlite::Row) -> Result<PlaybookNode> {
+    Ok(PlaybookNode {
+        id: row.get("id")?,
+        playbook_id: row.get("playbook_id")?,
+        card_id: row.get("card_id")?,
+        parent_id: row.get("parent_id")?,
+        position: row.get("position")?,
+    })
+}
+
+/// All playbooks, ordered for the list (by position, then name).
+pub fn all_playbooks(conn: &Connection) -> Result<Vec<Playbook>> {
+    let mut stmt = conn.prepare("SELECT * FROM playbooks ORDER BY position, name")?;
+    let rows = stmt.query_map([], row_to_playbook)?;
+    rows.collect()
+}
+
+pub fn get_playbook(conn: &Connection, id: &str) -> Result<Option<Playbook>> {
+    let mut stmt = conn.prepare("SELECT * FROM playbooks WHERE id = ?1")?;
+    let mut rows = stmt.query_map(params![id], row_to_playbook)?;
+    match rows.next() {
+        Some(r) => Ok(Some(r?)),
+        None => Ok(None),
+    }
+}
+
+/// One playbook's nodes, ordered by sibling position (the tree shape is derived on
+/// the frontend from `parent_id`).
+pub fn playbook_nodes(conn: &Connection, playbook_id: &str) -> Result<Vec<PlaybookNode>> {
+    let mut stmt =
+        conn.prepare("SELECT * FROM playbook_nodes WHERE playbook_id = ?1 ORDER BY position, id")?;
+    let rows = stmt.query_map(params![playbook_id], row_to_playbook_node)?;
+    rows.collect()
+}
+
+/// Every playbook node (for export).
+pub fn all_playbook_nodes(conn: &Connection) -> Result<Vec<PlaybookNode>> {
+    let mut stmt =
+        conn.prepare("SELECT * FROM playbook_nodes ORDER BY playbook_id, position, id")?;
+    let rows = stmt.query_map([], row_to_playbook_node)?;
+    rows.collect()
+}
+
+/// Insert or update a playbook's metadata (upsert on primary key). Node structure is
+/// persisted separately via `save_playbook_nodes`.
+pub fn save_playbook(conn: &Connection, p: &Playbook) -> Result<()> {
+    conn.execute(
+        "INSERT INTO playbooks (id, name, description, position, created_at, modified_at)
+         VALUES (?1,?2,?3,?4,?5,?6)
+         ON CONFLICT(id) DO UPDATE SET name=?2, description=?3, position=?4, created_at=?5, modified_at=?6",
+        params![p.id, p.name, p.description, p.position, p.created_at, p.modified_at],
+    )?;
+    Ok(())
+}
+
+/// Delete a playbook and its nodes. The referenced cards are untouched — they stay in
+/// the library and every deck they belong to.
+pub fn delete_playbook(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM playbook_nodes WHERE playbook_id = ?1", params![id])?;
+    conn.execute("DELETE FROM playbooks WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+/// Replace ALL nodes of a playbook with the given list. The frontend owns the tree in
+/// memory and persists it wholesale (atomic, and trivial for a playbook's small tree).
+/// Only card *references* are written — cards are never modified.
+pub fn save_playbook_nodes(
+    conn: &Connection,
+    playbook_id: &str,
+    nodes: &[PlaybookNode],
+) -> Result<()> {
+    conn.execute(
+        "DELETE FROM playbook_nodes WHERE playbook_id = ?1",
+        params![playbook_id],
+    )?;
+    for n in nodes {
+        conn.execute(
+            "INSERT INTO playbook_nodes (id, playbook_id, card_id, parent_id, position)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![n.id, playbook_id, n.card_id, n.parent_id, n.position],
+        )?;
+    }
+    Ok(())
+}
+
+/// Distinct card ids referenced by any playbook (drives the "exclude playbook cards
+/// from study" toggle).
+pub fn playbook_card_ids(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT DISTINCT card_id FROM playbook_nodes")?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+    rows.collect()
+}
+
 /// Serialize the whole vault to a pretty JSON string.
 pub fn export_json(conn: &Connection) -> Result<String> {
     let export = VaultExport {
@@ -648,6 +771,8 @@ pub fn export_json(conn: &Connection) -> Result<String> {
         custom_languages: custom_languages(conn)?,
         decks: all_decks(conn)?,
         review_log: all_review_log(conn)?,
+        playbooks: all_playbooks(conn)?,
+        playbook_nodes: all_playbook_nodes(conn)?,
     };
     Ok(serde_json::to_string_pretty(&export).unwrap_or_else(|_| "{}".into()))
 }
@@ -700,5 +825,18 @@ pub fn import_export(conn: &Connection, export: &VaultExport) -> Result<usize> {
             (SELECT deck_id FROM card_decks WHERE card_id = shards.id ORDER BY deck_id LIMIT 1), '')",
         [],
     )?;
+    // Playbooks + their nodes (additive; old exports without them import cleanly).
+    for pb in &export.playbooks {
+        if get_playbook(conn, &pb.id)?.is_none() {
+            save_playbook(conn, pb)?;
+        }
+    }
+    for node in &export.playbook_nodes {
+        conn.execute(
+            "INSERT OR IGNORE INTO playbook_nodes (id, playbook_id, card_id, parent_id, position)
+             VALUES (?1,?2,?3,?4,?5)",
+            params![node.id, node.playbook_id, node.card_id, node.parent_id, node.position],
+        )?;
+    }
     Ok(imported)
 }

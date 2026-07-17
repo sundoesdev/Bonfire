@@ -105,8 +105,11 @@ export async function renderSettings(container, ctx) {
       <div class="section-title">Decks</div>
       <div class="panel">
         <div class="muted" style="margin-bottom:8px">A deck's preset controls its fields — the <b>Code</b> preset shows the Language field and syntax highlighting; other presets hide them so you can study any subject. Cards in a deleted deck move to the default deck. Star one deck as your <b>daily default</b> — the Ctrl+D quick-start studies it. The built-in <b>Default</b> and <b>Debt</b> decks (greyed) are required by Hearth — they can't be renamed or deleted, but you can change their preset or make one your daily default.</div>
-        <div class="row" style="margin-bottom:10px">
+        <div class="row" style="margin-bottom:10px;gap:10px;align-items:center">
           <button type="button" class="btn btn-toggle ${hideNative ? "on" : ""}" id="toggle-native">Hide built-in decks</button>
+          <div class="spacer"></div>
+          <label for="daily-deck-select" class="muted">Daily deck (Ctrl+D)</label>
+          <select id="daily-deck-select"></select>
         </div>
         <div id="deck-list"></div>
         <hr style="border:none;border-top:1px solid var(--border);margin:12px 0" />
@@ -183,6 +186,24 @@ export async function renderSettings(container, ctx) {
 
   renderIntegrity(root, ctx);
   renderDecks(root, ctx, dailyDeck, hideNative);
+
+  // Dedicated daily-deck picker: lists every deck (incl. the built-in Default),
+  // independent of the "Hide built-in decks" toggle — so Default is always selectable
+  // as the Ctrl+D quick-start deck. The auto Debt deck is excluded.
+  const dailyDeckSelect = root.querySelector("#daily-deck-select");
+  dailyDeckSelect.innerHTML =
+    `<option value="">None</option>` +
+    ctx
+      .decks()
+      .filter((d) => d.id !== DEBT_DECK_ID)
+      .map((d) => `<option value="${esc(d.id)}" ${d.id === dailyDeck ? "selected" : ""}>${esc(d.name) || "(unnamed)"}</option>`)
+      .join("");
+  dailyDeckSelect.addEventListener("change", async () => {
+    await ctx.api.setSetting("daily_deck", dailyDeckSelect.value);
+    ctx.toast(dailyDeckSelect.value ? "Daily deck set" : "Daily deck cleared");
+    ctx.navigate("settings");
+  });
+
   root.querySelector("#toggle-native").addEventListener("click", async (e) => {
     const on = e.currentTarget.classList.toggle("on");
     await ctx.api.setSetting("hide_native_decks", on ? "true" : "false");

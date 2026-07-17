@@ -2,7 +2,7 @@
 // plus multi-select with bulk actions (item 1: delete / re-tag / add-to-deck /
 // remove-from-deck / edit).
 import { el, esc, langDot, metaBadges, isDue } from "../dom.js";
-import { CATEGORIES, FAMILIARITIES, FAMILIARITY_ORDER } from "../constants.js";
+import { CATEGORIES, FAMILIARITIES, FAMILIARITY_ORDER, ALL_DECKS } from "../constants.js";
 import {
   bulkDelete,
   bulkAddToDeck,
@@ -40,6 +40,15 @@ export function renderLibrary(container, ctx, params = {}) {
   let anchorIdx = null;
 
   const opt = (v, label) => `<option value="${esc(v)}">${esc(label ?? v)}</option>`;
+  // Deck filter (decks are filters, never scopes): the Library always lists the whole
+  // library; this narrows it to one deck's cards. Defaults to the active filter.
+  const curDeck = ctx.currentDeckId();
+  const deckOpts =
+    `<option value="${ALL_DECKS}" ${curDeck === ALL_DECKS ? "selected" : ""}>All decks</option>` +
+    ctx
+      .decks()
+      .map((d) => `<option value="${esc(d.id)}" ${d.id === curDeck ? "selected" : ""}>${esc(d.name) || "(unnamed)"}</option>`)
+      .join("");
 
   const root = el(`
     <div>
@@ -48,6 +57,7 @@ export function renderLibrary(container, ctx, params = {}) {
         <button class="btn btn-primary" id="new-btn">+ New</button>
       </div>
       <div class="filters">
+        <select id="f-deck" title="Filter by deck">${deckOpts}</select>
         <select id="f-lang">${opt("", "All languages")}${allLangs.map((l) => opt(l)).join("")}</select>
         <select id="f-cat">${opt("", "All categories")}${CATEGORIES.map((c) => opt(c)).join("")}</select>
         <select id="f-fam">${opt("", "All familiarity")}${FAMILIARITIES.map((f) => opt(f)).join("")}</select>
@@ -77,6 +87,7 @@ export function renderLibrary(container, ctx, params = {}) {
   `);
 
   const search = root.querySelector("#search");
+  const fDeck = root.querySelector("#f-deck");
   const fLang = root.querySelector("#f-lang");
   const fCat = root.querySelector("#f-cat");
   const fFam = root.querySelector("#f-fam");
@@ -115,6 +126,7 @@ export function renderLibrary(container, ctx, params = {}) {
 
   function applyAndRender() {
     let result = shards.filter((s) => {
+      if (fDeck.value && fDeck.value !== ALL_DECKS && !(s.deckIds || []).includes(fDeck.value)) return false;
       if (!fuzzyMatch(search.value, s)) return false;
       if (fLang.value && s.language !== fLang.value) return false;
       if (fCat.value && s.category !== fCat.value) return false;
@@ -189,6 +201,16 @@ export function renderLibrary(container, ctx, params = {}) {
 
   search.addEventListener("input", applyAndRender);
   [fLang, fCat, fFam, fTag, fSort].forEach((sel) => sel.addEventListener("change", applyAndRender));
+  // The deck filter also becomes the app-wide "active deck" (seeds new cards, the
+  // sidebar switcher, the study focus) — persist it and sync the sidebar, but keep
+  // filtering locally so the search box and selection survive.
+  fDeck.addEventListener("change", () => {
+    ctx.state.currentDeckId = fDeck.value;
+    ctx.api.setSetting("current_deck", fDeck.value).catch(() => {});
+    const sw = document.querySelector("#deck-switcher");
+    if (sw) sw.value = fDeck.value;
+    applyAndRender();
+  });
   root.querySelector("#new-btn").addEventListener("click", () => ctx.newShard());
 
   selAll.addEventListener("change", () => {

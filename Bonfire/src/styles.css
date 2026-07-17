@@ -1158,6 +1158,78 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible,
   }
 }
 
+/* ---------- Playbooks (landing dashboard) ---------- */
+/* 2×2 grid: create (top-left ¼), TEMP (bottom-left ¼), list (right ½, full height). */
+.pb-landing {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 16px;
+  height: 100%;
+}
+.pb-create { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; }
+.pb-temp {
+  grid-column: 1; grid-row: 2;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-serif); letter-spacing: 0.1em;
+}
+.pb-listpanel { grid-column: 2; grid-row: 1 / span 2; display: flex; flex-direction: column; min-height: 0; }
+.pb-listbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; flex-shrink: 0; }
+.pb-listrows { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.pb-prow { cursor: default; }
+.pb-prow.selected { border-color: var(--accent); background: var(--accent-soft); }
+.pb-prow-date { margin-left: 8px; flex-shrink: 0; }
+
+/* ---------- Playbooks (editor tree + runner) ---------- */
+/* Editor: nested, file-explorer-indented step rows. */
+.pb-tree { display: flex; flex-direction: column; gap: 3px; }
+.pb-tree-row {
+  display: flex; align-items: center; gap: 5px;
+  padding: 5px 7px; border-radius: var(--r-md);
+  border: 0.5px solid var(--border); background: var(--surface);
+}
+.pb-tree-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 340px; }
+
+/* Runner: main card pane + full-height right-hand step/graph sidebar. Fills #view. */
+.pb-runner { display: flex; gap: 0; height: 100%; min-height: 0; }
+.pb-main { flex: 1; min-width: 0; overflow-y: auto; padding-right: 16px; }
+.pb-card-media { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
+.pb-runner-nav { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
+.pb-progress { color: var(--text-2); font-size: 13px; }
+
+/* Fixed-width, full-height sidebar (steps mode). Graph mode sets width inline. */
+.pb-sidebar {
+  flex-shrink: 0; width: 300px; height: 100%; box-sizing: border-box;
+  display: flex; flex-direction: column;
+  border: 0.5px solid var(--border); border-radius: var(--r-lg);
+  background: var(--surface); padding: 8px;
+}
+.pb-sidebar-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; flex-shrink: 0; }
+.pb-steps { flex: 1; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+/* Step rectangles — word-wrap long titles so they don't stretch the sidebar. */
+.pb-step {
+  text-align: left; background: transparent; cursor: pointer; font: inherit;
+  border: 0.5px solid transparent; border-radius: var(--r-md);
+  padding: 6px 8px; color: var(--text);
+  white-space: normal; overflow-wrap: anywhere; line-height: 1.25;
+}
+.pb-step:hover { background: var(--surface-2); }
+.pb-step.current {
+  background: var(--accent-soft); border-color: var(--accent);
+  color: var(--accent-pressed); font-weight: 600;
+}
+.pb-graph { flex: 1; min-height: 0; width: 100%; }
+
+/* Splitter between the card pane and the graph panel (graph mode only). */
+.pb-resizer {
+  flex-shrink: 0; width: 10px; align-self: stretch; cursor: col-resize;
+  display: flex; align-items: center; justify-content: center;
+}
+.pb-resizer::before {
+  content: ""; width: 2px; height: 44px; border-radius: 2px; background: var(--border);
+}
+.pb-resizer:hover::before { background: var(--accent); }
+
 
 
 

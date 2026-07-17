@@ -8,6 +8,7 @@ import {
   DIFFICULTIES,
   FOUNDATION_TAG,
   REVEAL_ONLY_TAG,
+  DEBT_DECK_ID,
   cardTypeOptions,
   getDifficulty,
   isFoundation,
@@ -98,6 +99,21 @@ export function buildCardFields(ctx, shard) {
     ? `<label>Language</label><select id="cf-lang">${langOpts}</select>`
     : "";
 
+  // Deck memberships (many-to-many): a card can sit in any number of decks, or none.
+  // The auto Debt deck is excluded — it's reconciled automatically, not hand-assigned.
+  const shardDeckIds = shard.deckIds || [];
+  const assignableDecks = ctx.decks().filter((d) => d.id !== DEBT_DECK_ID);
+  const deckChecks = assignableDecks.length
+    ? assignableDecks
+        .map(
+          (d) =>
+            `<label class="chk"><input type="checkbox" class="cf-deck" value="${esc(d.id)}" ${
+              shardDeckIds.includes(d.id) ? "checked" : ""
+            }/> ${esc(d.name) || "(unnamed)"}</label>`
+        )
+        .join("")
+    : '<span class="muted">No decks yet — add one in Settings → Decks.</span>';
+
   const node = el(`
     <div class="card-fields">
       <div class="row" style="margin-bottom:12px">
@@ -136,6 +152,8 @@ export function buildCardFields(ctx, shard) {
         <input type="text" id="cf-source" placeholder="URL, book, man page…" value="${esc(shard.source)}" />
         <label>Tags</label>
         <input type="text" id="cf-tags" placeholder="Comma-separated: networking, advanced, foundation" value="${esc(renderTags(shard.tags || []))}" />
+        <label>Decks</label>
+        <div class="vlist" id="cf-decks">${deckChecks}</div>
       </div>
       <div class="section-title" style="margin-top:12px">Description</div>
       <textarea id="cf-desc" style="width:100%;min-height:80px" placeholder="Why does this work? When would you use it? (markdown-lite: **bold**, *italic*, \`code\`)">${esc(shard.description)}</textarea>
@@ -243,7 +261,13 @@ export function buildCardFields(ctx, shard) {
     // carry one, stamp in the dropdown's selected level (defaulting to beginner).
     let tags = parseTags(tagsInput.value);
     if (!getDifficulty(tags)) tags = setDifficulty(tags, diffSel.value || DIFFICULTIES[0]);
+    // Deck memberships: the checked assignable decks, plus any membership not shown
+    // in the form (e.g. the auto Debt deck) so a plain save never drops it.
+    const listable = new Set(assignableDecks.map((d) => d.id));
+    const checkedDecks = [...node.querySelectorAll("#cf-decks input.cf-deck:checked")].map((i) => i.value);
+    const deckIds = [...new Set([...checkedDecks, ...shardDeckIds.filter((id) => !listable.has(id))])];
     return {
+      deckIds,
       title: node.querySelector("#cf-title").value.trim(),
       prompt: promptEl.value.trim(),
       language: langSel ? (langSel.value === ADD_CUSTOM ? shard.language : langSel.value) : shard.language || "",

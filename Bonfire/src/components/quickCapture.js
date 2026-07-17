@@ -9,7 +9,7 @@
 // setting and pre-seeded into the next blank form. Only the content fields
 // (title/prompt/answer/description/attachments) reset each time.
 import { el } from "../dom.js";
-import { ALL_DECKS, DEFAULT_DECK_ID } from "../constants.js";
+import { ALL_DECKS } from "../constants.js";
 import { buildCardFields, blankShard } from "./cardFields.js";
 import { confirmDialog } from "./confirm.js";
 
@@ -36,16 +36,20 @@ function persistDefaults(ctx, data) {
   ctx.api.setSetting(DEFAULTS_KEY, JSON.stringify(picked));
 }
 
-export async function openQuickCapture(ctx) {
+// `opts.onSaved(savedShard)` — if supplied, it's called with the persisted card
+// instead of the default "navigate to the current view" (used by the Playbook editor
+// to add a freshly-created card as a node).
+export async function openQuickCapture(ctx, opts = {}) {
   const root = document.querySelector("#modal-root");
   if (root.querySelector(".modal-backdrop")) return; // already open
 
   const defaults = await loadDefaults(ctx);
   // Seed last-used classification; content fields stay blank (from blankShard()).
-  // New cards join the current deck; if the library is on "All decks" (no deck
-  // context), they land in the Default deck (the user can re-file them after).
+  // New cards join the active deck filter when one is set; on "All decks" they seed
+  // no deck (the backend homes a truly deckless save to Default). The card form's
+  // Decks control lets the user pick memberships explicitly.
   const cur = ctx.currentDeckId();
-  const deckIds = [cur && cur !== ALL_DECKS ? cur : DEFAULT_DECK_ID];
+  const deckIds = cur && cur !== ALL_DECKS ? [cur] : [];
   const shard = { ...blankShard(), ...defaults, deckIds };
   const fields = buildCardFields(ctx, shard);
 
@@ -95,7 +99,7 @@ export async function openQuickCapture(ctx) {
       alert("Title and answer are required.");
       return;
     }
-    await ctx.api.saveShard({
+    const saved = await ctx.api.saveShard({
       ...shard,
       ...data,
       // New cards always enter the review queue, due today.
@@ -105,7 +109,8 @@ export async function openQuickCapture(ctx) {
     // Remember this card's classification for the next add.
     persistDefaults(ctx, data);
     close();
-    ctx.navigate(document.querySelector("#sidebar nav button.active")?.dataset.view || "dashboard");
+    if (opts.onSaved) opts.onSaved(saved);
+    else ctx.navigate(document.querySelector("#sidebar nav button.active")?.dataset.view || "dashboard");
   }
   function onKey(e) {
     if (e.key === "Escape") tryClose();

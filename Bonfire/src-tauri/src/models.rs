@@ -140,6 +140,41 @@ impl Default for Deck {
     }
 }
 
+/// A playbook: a self-authored, step-by-step tutorial over existing cards. It is a
+/// tree of nodes (see `PlaybookNode`), each *referencing* a card — never a study
+/// container. Cards stay in the library; a playbook only orders them for a walkthrough.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Playbook {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    /// Sort order in the Playbooks list.
+    pub position: i64,
+    pub created_at: String,
+    pub modified_at: String,
+}
+
+/// One node in a playbook's tree. `parent_id` empty = a root node; `position` orders
+/// siblings (the a, b, c order). `card_id` references a shard — it never owns it.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PlaybookNode {
+    pub id: String,
+    pub playbook_id: String,
+    pub card_id: String,
+    pub parent_id: String,
+    pub position: i64,
+}
+
+/// A playbook plus its full node list, returned together for the runner/editor.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PlaybookDetail {
+    pub playbook: Playbook,
+    pub nodes: Vec<PlaybookNode>,
+}
+
 /// One recorded review event, used for the study heatmap / streak analytics.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -195,4 +230,6 @@ pub struct VaultExport {
     pub custom_languages: Vec<String>,
     pub decks: Vec<Deck>,
     pub review_log: Vec<ReviewLogEntry>,
+    pub playbooks: Vec<Playbook>,
+    pub playbook_nodes: Vec<PlaybookNode>,
 }
