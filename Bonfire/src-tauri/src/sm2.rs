@@ -78,3 +78,53 @@ pub fn quality_from_rating(rating: &str) -> i64 {
         _ => 4,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_first_two_intervals_are_the_fixed_ladder() {
+        let cfg = Sm2Config::default();
+        assert_eq!(sm2(4, 0, 0, 2.5, &cfg).interval, 1);
+        assert_eq!(sm2(4, 1, 1, 2.5, &cfg).interval, 6);
+    }
+
+    #[test]
+    fn a_lapse_resets_the_schedule() {
+        let cfg = Sm2Config::default();
+        let r = sm2(quality_from_rating("forgot"), 30, 5, 2.5, &cfg);
+        assert_eq!(r.interval, 1);
+        assert_eq!(r.repetitions, 0);
+        assert!(r.ease < 2.5, "a lapse must also lower ease");
+    }
+
+    #[test]
+    fn ease_never_falls_below_the_floor() {
+        let cfg = Sm2Config::default();
+        let mut ease = 2.5;
+        for _ in 0..20 {
+            ease = sm2(0, 10, 3, ease, &cfg).ease;
+        }
+        assert!(ease >= cfg.ease_floor, "ease {ease} broke the floor");
+    }
+
+    #[test]
+    fn graduated_reviews_grow_by_ease_and_hard_grows_slower() {
+        let cfg = Sm2Config::default();
+        let good = sm2(quality_from_rating("good"), 10, 3, 2.5, &cfg).interval;
+        let hard = sm2(quality_from_rating("hard"), 10, 3, 2.5, &cfg).interval;
+        assert_eq!(good, 25); // 10 * 2.5
+        assert_eq!(hard, 12); // 10 * 1.2
+        assert!(hard < good);
+    }
+
+    #[test]
+    fn ratings_map_to_the_documented_grades() {
+        assert_eq!(quality_from_rating("forgot"), 0);
+        assert_eq!(quality_from_rating("hard"), 3);
+        assert_eq!(quality_from_rating("good"), 4);
+        assert_eq!(quality_from_rating("easy"), 5);
+        assert_eq!(quality_from_rating("nonsense"), 4, "unknown falls back to good");
+    }
+}
