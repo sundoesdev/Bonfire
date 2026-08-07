@@ -16,6 +16,8 @@ import {
   SPECIAL_TAGS,
 } from "../constants.js";
 import { loadTemplates, saveTemplates, isBuiltin } from "../templates.js";
+import { confirmDialog } from "../components/confirm.js";
+import { syncNow, invalidateSyncState, SYNC_EACH_CARD } from "../sync.js";
 
 // Read a JSON settings blob, falling back to `dflt` on miss/parse error.
 async function loadJsonSetting(ctx, key, dflt) {
@@ -68,6 +70,7 @@ export async function renderSettings(container, ctx) {
         <button type="button" class="settings-tab-btn" data-tab="scheduling"><i class="ti ti-clock"></i>Scheduling</button>
         <button type="button" class="settings-tab-btn" data-tab="templates"><i class="ti ti-template"></i>Templates</button>
         <button type="button" class="settings-tab-btn" data-tab="data"><i class="ti ti-database"></i>Data</button>
+        <button type="button" class="settings-tab-btn" data-tab="sync"><i class="ti ti-refresh"></i>Sync</button>
         <button type="button" class="settings-tab-btn" data-tab="integrity"><i class="ti ti-shield-check"></i>Integrity</button>
       </div>
 
@@ -177,6 +180,37 @@ export async function renderSettings(container, ctx) {
         <button class="btn btn-danger" id="wipe-stats" style="margin-bottom:12px">Wipe all stats…</button>
         <div class="muted" style="margin-bottom:6px">Delete all cards permanently removes every card (across all decks).</div>
         <button class="btn btn-danger" id="delete-all">Delete all cards…</button>
+      </div>
+      </section>
+
+      <section class="settings-tab" data-tab="sync">
+      <div class="section-title" style="margin-top:6px">Sync</div>
+      <div class="panel">
+        <div class="muted" style="margin-bottom:8px">Keeps your cards, schedules, and review history the same on every machine, through a <b>private git repository you own</b>. Create an empty private repo, paste its URL below, and Hearth does the rest. Your vault is separate from Hearth's own source — never point this at a fork of Hearth.</div>
+        <div class="muted" style="margin-bottom:10px">Authentication uses the git credentials already on this machine (SSH key or credential helper), so Hearth never stores a password or token.</div>
+        <label class="field">
+          <span>Vault remote</span>
+          <input type="text" id="sync-remote" spellcheck="false" placeholder="git@github.com:you/hearth-vault.git" />
+        </label>
+        <div class="vlist" style="margin-top:8px">
+          <button class="btn btn-primary" id="sync-connect">Connect</button>
+          <button class="btn btn-tool" id="sync-run">Sync now</button>
+          <button class="btn btn-tool" id="sync-disconnect">Disconnect</button>
+        </div>
+        <div class="muted-2" id="sync-state" style="margin-top:10px"></div>
+      </div>
+
+      <div class="panel" style="margin-top:12px">
+        <div class="section-title" style="margin-top:0">When to sync</div>
+        <div class="muted" style="margin-bottom:8px">Hearth always syncs when the app starts, when a study session begins, and when one ends. That closes the window in which two machines could edit the same card almost entirely.</div>
+        <label class="check"><input type="checkbox" id="sync-each-card" /> Also sync after every card graded</label>
+        <div class="muted" style="margin-top:4px">Off by default. Every rating is already saved to disk immediately, so this adds no safety — it only adds a network round-trip in the middle of a session, which is noticeable on a slow connection.</div>
+      </div>
+
+      <div class="panel" style="margin-top:12px">
+        <div class="section-title" style="margin-top:0">Conflicts</div>
+        <div class="muted" style="margin-bottom:8px">If the same card was edited on two machines before either synced, the newer edit wins and the other version is kept here rather than thrown away.</div>
+        <div id="sync-conflicts"></div>
       </div>
       </section>
     </div>
@@ -306,6 +340,8 @@ export async function renderSettings(container, ctx) {
   root.querySelector("#wipe-stats").addEventListener("click", () => confirmWipeStats(ctx));
   root.querySelector("#delete-all").addEventListener("click", () => confirmDeleteAll(ctx));
 
+  await renderSync(root, ctx);
+
   // Tab switching: only one group is visible at a time. Every control stays in the
   // DOM (just inside a hidden section), so the querySelector-wired handlers above
   // keep working regardless of which tab is active.
@@ -321,6 +357,185 @@ export async function renderSettings(container, ctx) {
 
   container.innerHTML = "";
   container.appendChild(root);
+}
+
+// Sync tab: the vault remote, the cadence toggle, and any conflict the merge
+// resolved by recency (the losing version is kept so nothing is ever silently
+// lost — see docs/SYNC.md).
+async function renderSync(root, ctx) {
+  const remoteInput = root.querySelector("#sync-remote");
+  const stateEl = root.querySelector("#sync-state");
+  const eachCard = root.querySelector("#sync-each-card");
+
+  async function refresh() {
+    let st;
+    try {
+      st = await ctx.api.syncStatus();
+    } catch (_e) {
+      stateEl.textContent = "Sync is unavailable.";
+      return;
+    }
+    remoteInput.value = st.remote || "";
+
+    const lines = [];
+    if (!st.available) {
+      lines.push("git is not installed or not on PATH — Hearth needs it to sync.");
+    } else if (!st.configured) {
+      lines.push("Not connected. Hearth works normally offline; add a remote to sync.");
+    } else {
+      lines.push(st.lastSynced ? `Last synced ${new Date(st.lastSynced).toLocaleString()}.` : "Connected, not synced yet.");
+      if (st.lastError) lines.push(`Last attempt failed: ${st.lastError}`);
+    }
+    if (st.deviceId) lines.push(`This device: ${st.deviceId}`);
+    stateEl.innerHTML = lines.map((l) => `<div>${esc(l)}</div>`).join("");
+
+    await renderConflicts();
+  }
+
+  async function renderConflicts() {
+    const host = root.querySelector("#sync-conflicts");
+    let rows = [];
+    try {
+      rows = await ctx.api.listSyncConflicts();
+    } catch (_e) {
+      /* leave the list empty */
+    }
+    if (!rows.length) {
+      host.innerHTML = `<div class="muted-2">No conflicts.</div>`;
+      return;
+    }
+    host.innerHTML = rows
+      .map(
+        (c) => `
+        <div class="list-row" data-id="${c.id}">
+          <div style="flex:1;min-width:0">
+            <div><b>${esc(c.entity)}</b> ${esc(c.entityId)}</div>
+            <div class="muted-2">${esc(new Date(c.detectedAt).toLocaleString())} · discarded version kept</div>
+          </div>
+          <button class="btn btn-tool" data-act="view">View</button>
+          <button class="btn btn-tool" data-act="restore">Restore this version</button>
+          <button class="btn btn-tool" data-act="dismiss">Dismiss</button>
+        </div>`
+      )
+      .join("");
+
+    host.querySelectorAll(".list-row").forEach((row) => {
+      const id = Number(row.dataset.id);
+      const entry = rows.find((c) => c.id === id);
+      row.querySelector('[data-act="view"]').addEventListener("click", () => {
+        showLosingVersion(entry);
+      });
+      row.querySelector('[data-act="restore"]').addEventListener("click", async () => {
+        const ok = await confirmDialog({
+          title: "Restore this version?",
+          message:
+            "The version currently in your library will be replaced by the one that lost, and re-dated so it wins the next sync.",
+          confirmLabel: "Restore",
+        });
+        if (!ok) return;
+        try {
+          await ctx.api.resolveSyncConflict(id, true);
+          ctx.toast("Version restored");
+          await renderConflicts();
+        } catch (e) {
+          alert(String(e));
+        }
+      });
+      row.querySelector('[data-act="dismiss"]').addEventListener("click", async () => {
+        try {
+          await ctx.api.resolveSyncConflict(id, false);
+          await renderConflicts();
+        } catch (_e) {
+          /* leave the row in place */
+        }
+      });
+    });
+  }
+
+  root.querySelector("#sync-connect").addEventListener("click", async () => {
+    const remote = remoteInput.value.trim();
+    if (!remote) {
+      alert("Enter the URL of an empty private git repository.");
+      return;
+    }
+    try {
+      await ctx.api.syncConfigure(remote);
+      invalidateSyncState();
+      ctx.toast("Connected — syncing…");
+      const summary = await syncNow(ctx, { silent: false });
+      if (summary) ctx.refreshView();
+      await refresh();
+    } catch (e) {
+      alert(String(e));
+      await refresh();
+    }
+  });
+
+  root.querySelector("#sync-run").addEventListener("click", async () => {
+    await syncNow(ctx, { silent: false });
+    await refresh();
+  });
+
+  root.querySelector("#sync-disconnect").addEventListener("click", async () => {
+    const ok = await confirmDialog({
+      title: "Disconnect from the vault remote?",
+      message:
+        "Your cards stay on this machine and the remote is left untouched. You can reconnect at any time.",
+      confirmLabel: "Disconnect",
+    });
+    if (!ok) return;
+    try {
+      await ctx.api.syncConfigure("");
+      invalidateSyncState();
+      await refresh();
+    } catch (e) {
+      alert(String(e));
+    }
+  });
+
+  try {
+    eachCard.checked = (await ctx.api.getSetting(SYNC_EACH_CARD)) === "true";
+  } catch (_e) {
+    /* default off */
+  }
+  eachCard.addEventListener("change", () => {
+    ctx.api.setSetting(SYNC_EACH_CARD, String(eachCard.checked)).catch(() => {});
+  });
+
+  await refresh();
+}
+
+// Show the discarded side of a conflict. A plain alert() would be unreadable for
+// a whole record, so this is a scrollable modal like the rest of the app's.
+function showLosingVersion(entry) {
+  const root = document.querySelector("#modal-root");
+  if (root.querySelector(".modal-backdrop")) return;
+
+  const backdrop = el(`
+    <div class="modal-backdrop">
+      <div class="modal">
+        <h2>Discarded version</h2>
+        <div class="desc" style="margin-bottom:10px">${esc(entry.entity)} <b>${esc(entry.entityId)}</b> — the version that lost when this record was edited on two machines.</div>
+        <pre class="conflict-json">${esc(entry.losingJson)}</pre>
+        <div class="actions">
+          <button class="btn btn-secondary" id="conflict-close">Close</button>
+        </div>
+      </div>
+    </div>
+  `);
+  function close() {
+    root.innerHTML = "";
+    document.removeEventListener("keydown", onKey);
+  }
+  function onKey(e) {
+    if (e.key === "Escape") close();
+  }
+  backdrop.querySelector("#conflict-close").addEventListener("click", close);
+  backdrop.addEventListener("mousedown", (e) => {
+    if (e.target === backdrop) close();
+  });
+  root.appendChild(backdrop);
+  document.addEventListener("keydown", onKey);
 }
 
 // Scan all cards for organization gaps (item 2). HARD issues — no real deck or no
