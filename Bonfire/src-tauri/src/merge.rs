@@ -40,6 +40,14 @@ trait Record: Clone + Serialize {
     fn content(&self) -> String {
         serde_json::to_string(self).unwrap_or_default()
     }
+    /// Records Hearth creates for itself on every device, rather than records the
+    /// user authored. Two devices' copies necessarily differ (each stamps its own
+    /// timestamps at first launch), and that difference is not an edit — so they
+    /// resolve by recency silently instead of reporting a conflict the user can
+    /// neither understand nor act on.
+    fn is_scaffolding(&self) -> bool {
+        false
+    }
 }
 
 impl Record for Shard {
@@ -57,6 +65,12 @@ impl Record for Deck {
     }
     fn modified_at(&self) -> &str {
         &self.modified_at
+    }
+    fn is_scaffolding(&self) -> bool {
+        // The Default and Debt decks are seeded by db::migrate() on every device,
+        // each with its own timestamps. Without this, connecting a second device
+        // would report two conflicts on its very first sync, every time.
+        self.id == crate::db::DEFAULT_DECK_ID || self.id == crate::db::DEBT_DECK_ID
     }
 }
 
@@ -120,11 +134,13 @@ fn merge_records<T: Record>(
                     } else {
                         (rv, lv)
                     };
-                    conflicts.push(Conflict {
-                        entity,
-                        entity_id: id.clone(),
-                        losing_json: serde_json::to_string_pretty(lose).unwrap_or_default(),
-                    });
+                    if !win.is_scaffolding() {
+                        conflicts.push(Conflict {
+                            entity,
+                            entity_id: id.clone(),
+                            losing_json: serde_json::to_string_pretty(lose).unwrap_or_default(),
+                        });
+                    }
                     out.push(win.clone());
                 }
             }
@@ -390,19 +406,50 @@ mod tests {
     }
 
     #[test]
+    fn the_built_in_decks_never_report_a_conflict() {
+        // db::migrate() seeds Default and Debt on every device with that device's
+        // own timestamps, so two devices' copies always differ. Reporting that as
+        // a conflict would greet every new device with two entries the user can
+        // neither understand nor act on.
+        let deck = |id: &str, name: &str, modified: &str| Deck {
+            id: id.into(),
+            name: name.into(),
+            modified_at: modified.into(),
+            ..Default::default()
+        };
+        let local = VaultData {
+            decks: vec![
+                deck("default", "Default", "2026-01-01T00:00:00Z"),
+                deck("mine", "Mine", "2026-01-01T00:00:00Z"),
+            ],
+            ..Default::default()
+        };
+        let remote = VaultData {
+            decks: vec![
+                deck("default", "Default", "2026-02-01T00:00:00Z"),
+                deck("mine", "Renamed", "2026-02-01T00:00:00Z"),
+            ],
+            ..Default::default()
+        };
+
+        let m = merge(None, &local, &remote);
+        assert_eq!(m.conflicts.len(), 1, "only the user's own deck may conflict");
+        assert_eq!(m.conflicts[0].entity_id, "mine");
+        assert_eq!(m.data.decks.len(), 2, "both decks still survive the merge");
+    }
+
+    #[test]
     fn settings_resolve_by_recency_without_raising_conflicts() {
-        let mut local = VaultData::default();
-        local.settings = vec![SettingRow {
-            key: "fsrs_params".into(),
-            value: "old".into(),
-            modified_at: "2026-01-01T00:00:00Z".into(),
-        }];
-        let mut remote = VaultData::default();
-        remote.settings = vec![SettingRow {
-            key: "fsrs_params".into(),
-            value: "new".into(),
-            modified_at: "2026-02-01T00:00:00Z".into(),
-        }];
+        let setting = |value: &str, modified: &str| VaultData {
+            settings: vec![SettingRow {
+                key: "fsrs_params".into(),
+                value: value.into(),
+                modified_at: modified.into(),
+            }],
+            ..Default::default()
+        };
+        let local = setting("old", "2026-01-01T00:00:00Z");
+        let remote = setting("new", "2026-02-01T00:00:00Z");
 
         let m = merge(None, &local, &remote);
         assert_eq!(m.data.settings[0].value, "new");

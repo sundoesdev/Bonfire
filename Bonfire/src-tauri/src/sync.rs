@@ -445,6 +445,88 @@ mod tests {
         assert_eq!(db::all_shards(&conn).unwrap().len(), 1);
     }
 
+    /// End-to-end against a *real* vault, opt-in because it needs one.
+    ///
+    ///   HEARTH_REAL_VAULT=~/.local/share/com.bonfire.app/vault.db \
+    ///     cargo test real_vault -- --ignored --nocapture
+    ///
+    /// Copies the given database (never touching the original), migrates it,
+    /// publishes it to a scratch remote, pulls it into a second empty device,
+    /// and checks the whole library — cards, decks, memberships, schedules and
+    /// review history — arrived intact.
+    #[test]
+    #[ignore = "needs HEARTH_REAL_VAULT; run explicitly"]
+    fn real_vault_migrates_and_syncs_to_a_second_device() {
+        let Ok(src) = std::env::var("HEARTH_REAL_VAULT") else {
+            eprintln!("HEARTH_REAL_VAULT unset — skipping");
+            return;
+        };
+        let t = Tmp::new("realvault");
+        let remote = bare(&t.0.join("remote.git"));
+
+        // Device A: a copy of the real database, opened (which migrates it).
+        let a_dir = t.0.join("a");
+        std::fs::create_dir_all(&a_dir).unwrap();
+        let a_db = a_dir.join("vault.db");
+        std::fs::copy(&src, &a_db).expect("copy the real vault");
+        let a = Connection::open(&a_db).unwrap();
+        db::init(&a).expect("migrate the real vault");
+
+        let cards_before = db::all_shards(&a).unwrap().len();
+        let decks_before = db::all_decks(&a).unwrap().len();
+        let reviews_before = db::all_review_log(&a).unwrap().len();
+        let memberships_before: i64 = a
+            .query_row("SELECT COUNT(*) FROM card_decks", [], |r| r.get(0))
+            .unwrap();
+        eprintln!(
+            "device A after migration: {cards_before} cards, {decks_before} decks, \
+             {memberships_before} memberships, {reviews_before} reviews"
+        );
+        assert!(cards_before > 0, "the real vault should not be empty");
+
+        configure(&a, &a_dir, &remote).unwrap();
+        eprintln!("A: {}", sync_now(&a, &a_dir).expect("A publishes"));
+
+        // Device B: entirely empty, same remote.
+        let b_dir = t.0.join("b");
+        std::fs::create_dir_all(&b_dir).unwrap();
+        let b = Connection::open_in_memory().unwrap();
+        db::init(&b).unwrap();
+        configure(&b, &b_dir, &remote).unwrap();
+        eprintln!("B: {}", sync_now(&b, &b_dir).expect("B pulls"));
+
+        assert_eq!(db::all_shards(&b).unwrap().len(), cards_before, "cards");
+        assert_eq!(db::all_decks(&b).unwrap().len(), decks_before, "decks");
+        assert_eq!(
+            db::all_review_log(&b).unwrap().len(),
+            reviews_before,
+            "review history"
+        );
+
+        // Spot-check that content and schedule survived, not just the row count.
+        let sample = db::all_shards(&a).unwrap().into_iter().find(|s| !s.code.is_empty());
+        if let Some(orig) = sample {
+            let got = db::get_shard(&b, &orig.id).unwrap().expect("card present on B");
+            assert_eq!(got.title, orig.title);
+            assert_eq!(got.code, orig.code);
+            assert_eq!(got.review_next, orig.review_next, "schedule must travel");
+            assert_eq!(got.review_ease, orig.review_ease);
+            assert_eq!(got.tags, orig.tags);
+            eprintln!("spot-checked card {} ({})", orig.id, orig.title);
+        }
+
+        // Deck membership is the easiest thing to lose, since it lives in a join
+        // table rather than on the card row.
+        let memberships_after: i64 = b
+            .query_row("SELECT COUNT(*) FROM card_decks", [], |r| r.get(0))
+            .unwrap();
+        eprintln!("device B: {memberships_after} memberships");
+        assert!(
+            memberships_after >= memberships_before - cards_before as i64,
+            "deck memberships were lost: {memberships_before} -> {memberships_after}"
+        );
+    }
+
     #[test]
     fn media_survives_a_round_trip_between_devices() {
         let t = Tmp::new("media");
