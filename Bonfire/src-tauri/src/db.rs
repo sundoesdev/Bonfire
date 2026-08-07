@@ -86,6 +86,20 @@ pub fn init(conn: &Connection) -> Result<()> {
             card_id     TEXT NOT NULL DEFAULT '',
             parent_id   TEXT NOT NULL DEFAULT '',
             position    INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS tombstones (
+            entity     TEXT NOT NULL,
+            id         TEXT NOT NULL,
+            deleted_at TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (entity, id)
+        );
+        CREATE TABLE IF NOT EXISTS sync_conflicts (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity      TEXT NOT NULL DEFAULT '',
+            entity_id   TEXT NOT NULL DEFAULT '',
+            detected_at TEXT NOT NULL DEFAULT '',
+            device_id   TEXT NOT NULL DEFAULT '',
+            losing_json TEXT NOT NULL DEFAULT ''
         );",
     )?;
     migrate(conn)
@@ -162,6 +176,34 @@ fn migrate(conn: &Connection) -> Result<()> {
          SELECT id, deck_id FROM shards WHERE deck_id <> ''",
         [],
     )?;
+
+    // Sync support (see docs/SYNC.md).
+    //
+    // `settings.modified_at` gives settings rows a last-write-wins timestamp.
+    add_column(conn, "settings", "modified_at", "modified_at TEXT NOT NULL DEFAULT ''")?;
+
+    // review_log.id is AUTOINCREMENT and therefore meaningless across devices —
+    // two hosts independently number their rows 1..n. (shard_id, ts) is the real
+    // natural key: a card cannot be reviewed twice at the same instant. Collapse
+    // any pre-existing duplicates first, since the unique index would fail on them.
+    conn.execute(
+        "DELETE FROM review_log WHERE id NOT IN (
+             SELECT MIN(id) FROM review_log GROUP BY shard_id, ts)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS review_log_nat ON review_log (shard_id, ts)",
+        [],
+    )?;
+
+    // Indexes for the paths the merge and the stats views read in bulk. These
+    // were never declared; on a small vault they cost nothing, and a sync pass
+    // reads all three on every run.
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS review_log_day  ON review_log (day);
+         CREATE INDEX IF NOT EXISTS card_decks_deck ON card_decks (deck_id);
+         CREATE INDEX IF NOT EXISTS shards_next     ON shards (review_next);",
+    )?;
     Ok(())
 }
 
@@ -175,14 +217,93 @@ pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>> {
     }
 }
 
-/// Upsert a settings value.
+/// Upsert a settings value, stamping `modified_at` so sync can resolve it.
 pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
     conn.execute(
-        "INSERT INTO settings (key, value) VALUES (?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value = ?2",
-        params![key, value],
+        "INSERT INTO settings (key, value, modified_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(key) DO UPDATE SET value = ?2, modified_at = ?3",
+        params![key, value, now_iso()],
     )?;
     Ok(())
+}
+
+/// Settings that belong to the *user* and travel between their devices.
+/// Everything not listed here is device-local — syncing a theme or a window
+/// scale across machines would be wrong, and `sync_*` keys describe the
+/// connection itself and must never be replicated.
+pub const SYNCED_SETTINGS: &[&str] = &[
+    "sr_algorithm",
+    "sm2_params",
+    "fsrs_params",
+    "daily_study",
+    "card_templates",
+    "card_add_defaults",
+    "daily_deck",
+    "study_progress",
+];
+
+pub fn is_synced_setting(key: &str) -> bool {
+    SYNCED_SETTINGS.contains(&key)
+}
+
+/// Every syncable setting with its timestamp, for the vault serializer.
+pub fn synced_settings(conn: &Connection) -> Result<Vec<(String, String, String)>> {
+    let mut stmt = conn.prepare("SELECT key, value, modified_at FROM settings ORDER BY key")?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let row = row?;
+        if is_synced_setting(&row.0) {
+            out.push(row);
+        }
+    }
+    Ok(out)
+}
+
+/// Record that `id` was deleted, so the deletion propagates instead of the row
+/// simply reappearing from another device on the next merge.
+pub fn add_tombstone(conn: &Connection, entity: &str, id: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO tombstones (entity, id, deleted_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(entity, id) DO UPDATE SET deleted_at = ?3",
+        params![entity, id, now_iso()],
+    )?;
+    Ok(())
+}
+
+/// Clear a tombstone — used when a record legitimately comes back (a newer edit
+/// on another device beats an older delete, see docs/SYNC.md).
+pub fn drop_tombstone(conn: &Connection, entity: &str, id: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM tombstones WHERE entity = ?1 AND id = ?2",
+        params![entity, id],
+    )?;
+    Ok(())
+}
+
+/// All tombstones as `(entity, id, deleted_at)`.
+pub fn all_tombstones(conn: &Connection) -> Result<Vec<(String, String, String)>> {
+    let mut stmt =
+        conn.prepare("SELECT entity, id, deleted_at FROM tombstones ORDER BY entity, id")?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+        ))
+    })?;
+    rows.collect()
+}
+
+/// Current local timestamp, RFC-3339 — matches `created_at`/`modified_at` everywhere else.
+fn now_iso() -> String {
+    chrono::Local::now().to_rfc3339()
 }
 
 /// Generate a unique id: base36(epoch-ms) + 6 hex chars of a UUID.
@@ -327,7 +448,21 @@ pub fn get_shard(conn: &Connection, id: &str) -> Result<Option<Shard>> {
 }
 
 /// Insert or update a shard (upsert on primary key).
+///
+/// The row write, the `card_decks` rewrite, and the legacy-mirror sync are one
+/// transaction: they are three statements describing a single logical save, and
+/// a crash between them used to leave a card with no deck memberships.
 pub fn save_shard(conn: &Connection, s: &Shard) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    save_shard_in_tx(conn, s)?;
+    tx.commit()
+}
+
+/// The body of `save_shard`, without opening a transaction of its own.
+///
+/// SQLite has no nested `BEGIN`, so any caller that already holds a transaction
+/// (`import_export`, and the sync merge) must use this rather than `save_shard`.
+fn save_shard_in_tx(conn: &Connection, s: &Shard) -> Result<()> {
     let tags = serde_json::to_string(&s.tags).unwrap_or_else(|_| "[]".into());
     let related = serde_json::to_string(&s.related_ids).unwrap_or_else(|_| "[]".into());
     let media = serde_json::to_string(&s.media).unwrap_or_else(|_| "[]".into());
@@ -372,29 +507,48 @@ pub fn save_shard(conn: &Connection, s: &Shard) -> Result<()> {
         }
     }
     sync_legacy_deck(conn, &s.id)?;
-    Ok(())
+    // Saving a card that was previously deleted here revives it deliberately —
+    // drop the tombstone so the next merge doesn't re-delete it.
+    drop_tombstone(conn, "shard", &s.id)
 }
 
 pub fn delete_shard(conn: &Connection, id: &str) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
     conn.execute("DELETE FROM card_decks WHERE card_id = ?1", params![id])?;
     conn.execute("DELETE FROM shards WHERE id = ?1", params![id])?;
-    Ok(())
+    add_tombstone(conn, "shard", id)?;
+    tx.commit()
 }
 
 /// Delete the given shards. Returns the number removed.
 pub fn delete_shards(conn: &Connection, ids: &[String]) -> Result<usize> {
+    let tx = conn.unchecked_transaction()?;
     let mut n = 0;
     for id in ids {
         conn.execute("DELETE FROM card_decks WHERE card_id = ?1", params![id])?;
         n += conn.execute("DELETE FROM shards WHERE id = ?1", params![id])?;
+        add_tombstone(conn, "shard", id)?;
     }
+    tx.commit()?;
     Ok(n)
 }
 
 /// Delete every shard. Returns the number removed.
 pub fn delete_all_shards(conn: &Connection) -> Result<usize> {
+    // Collect ids before the delete — each one still needs a tombstone, or the
+    // whole library would flow straight back in from the next sync.
+    let ids: Vec<String> = {
+        let mut stmt = conn.prepare("SELECT id FROM shards")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        rows.collect::<Result<Vec<_>>>()?
+    };
+    let tx = conn.unchecked_transaction()?;
     conn.execute("DELETE FROM card_decks", [])?;
     let n = conn.execute("DELETE FROM shards", [])?;
+    for id in &ids {
+        add_tombstone(conn, "shard", id)?;
+    }
+    tx.commit()?;
     Ok(n)
 }
 
@@ -428,14 +582,16 @@ pub fn remove_cards_from_deck(conn: &Connection, ids: &[String], deck_id: &str) 
 
 /// Replace the tag list on each given card. Returns the number changed.
 pub fn retag_shards(conn: &Connection, ids: &[String], tags: &[String]) -> Result<usize> {
+    let tx = conn.unchecked_transaction()?;
     let mut changed = 0;
     for id in ids {
         if let Some(mut s) = get_shard(conn, id)? {
             s.tags = tags.to_vec();
-            save_shard(conn, &s)?;
+            save_shard_in_tx(conn, &s)?;
             changed += 1;
         }
     }
+    tx.commit()?;
     Ok(changed)
 }
 
@@ -482,6 +638,7 @@ pub fn save_deck(conn: &Connection, d: &Deck) -> Result<()> {
          ON CONFLICT(id) DO UPDATE SET name=?2, preset=?3, position=?4, created_at=?5, modified_at=?6",
         params![d.id, d.name, d.preset, d.position, d.created_at, d.modified_at],
     )?;
+    drop_tombstone(conn, "deck", &d.id)?;
     Ok(())
 }
 
@@ -489,6 +646,7 @@ pub fn save_deck(conn: &Connection, d: &Deck) -> Result<()> {
 /// other decks they belong to, and a card left in none simply becomes deckless —
 /// it still exists (browsable via "All decks", flagged by the integrity scanner).
 pub fn delete_deck(conn: &Connection, id: &str) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
     conn.execute("DELETE FROM card_decks WHERE deck_id = ?1", params![id])?;
     // Re-sync the legacy mirror for any card whose mirror pointed at this deck
     // (to its first remaining real membership, or '' if none).
@@ -500,12 +658,14 @@ pub fn delete_deck(conn: &Connection, id: &str) -> Result<()> {
         params![id, DEBT_DECK_ID],
     )?;
     conn.execute("DELETE FROM decks WHERE id = ?1", params![id])?;
-    Ok(())
+    add_tombstone(conn, "deck", id)?;
+    tx.commit()
 }
 
 /// Rename a tag across every shard. Renaming onto an existing tag merges them
 /// (duplicates are removed). Returns the number of shards changed.
 pub fn rename_tag(conn: &Connection, old: &str, new: &str) -> Result<usize> {
+    let tx = conn.unchecked_transaction()?;
     let mut changed = 0;
     for mut s in all_shards(conn)? {
         if !s.tags.iter().any(|t| t == old) {
@@ -518,22 +678,25 @@ pub fn rename_tag(conn: &Connection, old: &str, new: &str) -> Result<usize> {
             .map(|t| if t == old { new.to_string() } else { t })
             .filter(|t| !t.is_empty() && seen.insert(t.clone()))
             .collect();
-        save_shard(conn, &s)?;
+        save_shard_in_tx(conn, &s)?;
         changed += 1;
     }
+    tx.commit()?;
     Ok(changed)
 }
 
 /// Remove a tag from every shard. Returns the number of shards changed.
 pub fn delete_tag(conn: &Connection, tag: &str) -> Result<usize> {
+    let tx = conn.unchecked_transaction()?;
     let mut changed = 0;
     for mut s in all_shards(conn)? {
         if s.tags.iter().any(|t| t == tag) {
             s.tags.retain(|t| t != tag);
-            save_shard(conn, &s)?;
+            save_shard_in_tx(conn, &s)?;
             changed += 1;
         }
     }
+    tx.commit()?;
     Ok(changed)
 }
 
@@ -570,8 +733,11 @@ pub fn log_review(
     let now = chrono::Local::now();
     let day = now.format("%Y-%m-%d").to_string();
     let ts = now.to_rfc3339();
+    // OR IGNORE against the (shard_id, ts) unique index: a second row at the same
+    // nanosecond for the same card is a duplicate by definition, and a grade must
+    // never fail just because of a logging collision.
     conn.execute(
-        "INSERT INTO review_log (shard_id, deck_id, day, ts, rating, algorithm, duration_ms, session_id)
+        "INSERT OR IGNORE INTO review_log (shard_id, deck_id, day, ts, rating, algorithm, duration_ms, session_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![shard_id, deck_id, day, ts, rating, algorithm, duration_ms, session_id],
     )?;
@@ -723,15 +889,20 @@ pub fn save_playbook(conn: &Connection, p: &Playbook) -> Result<()> {
          ON CONFLICT(id) DO UPDATE SET name=?2, description=?3, position=?4, created_at=?5, modified_at=?6",
         params![p.id, p.name, p.description, p.position, p.created_at, p.modified_at],
     )?;
+    drop_tombstone(conn, "playbook", &p.id)?;
     Ok(())
 }
 
 /// Delete a playbook and its nodes. The referenced cards are untouched — they stay in
 /// the library and every deck they belong to.
 pub fn delete_playbook(conn: &Connection, id: &str) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
     conn.execute("DELETE FROM playbook_nodes WHERE playbook_id = ?1", params![id])?;
     conn.execute("DELETE FROM playbooks WHERE id = ?1", params![id])?;
-    Ok(())
+    // Nodes carry no timestamps of their own and travel inside the playbook
+    // record, so one tombstone for the playbook covers the whole tree.
+    add_tombstone(conn, "playbook", id)?;
+    tx.commit()
 }
 
 /// Replace ALL nodes of a playbook with the given list. The frontend owns the tree in
@@ -742,6 +913,7 @@ pub fn save_playbook_nodes(
     playbook_id: &str,
     nodes: &[PlaybookNode],
 ) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
     conn.execute(
         "DELETE FROM playbook_nodes WHERE playbook_id = ?1",
         params![playbook_id],
@@ -753,7 +925,7 @@ pub fn save_playbook_nodes(
             params![n.id, playbook_id, n.card_id, n.parent_id, n.position],
         )?;
     }
-    Ok(())
+    tx.commit()
 }
 
 /// Distinct card ids referenced by any playbook (drives the "exclude playbook cards
@@ -780,6 +952,7 @@ pub fn export_json(conn: &Connection) -> Result<String> {
 /// Import shards + custom languages from a parsed export.
 /// Existing shard ids are skipped. Returns the number of shards imported.
 pub fn import_export(conn: &Connection, export: &VaultExport) -> Result<usize> {
+    let tx = conn.unchecked_transaction()?;
     // Decks first, so imported cards can resolve their deck_id.
     for deck in &export.decks {
         if get_deck(conn, &deck.id)?.is_none() {
@@ -789,7 +962,8 @@ pub fn import_export(conn: &Connection, export: &VaultExport) -> Result<usize> {
     let mut imported = 0usize;
     for shard in &export.shards {
         if get_shard(conn, &shard.id)?.is_none() {
-            save_shard(conn, shard)?;
+            // In-tx variant: we already hold the import transaction.
+            save_shard_in_tx(conn, shard)?;
             imported += 1;
         }
     }
@@ -838,5 +1012,138 @@ pub fn import_export(conn: &Connection, export: &VaultExport) -> Result<usize> {
             params![node.id, node.playbook_id, node.card_id, node.parent_id, node.position],
         )?;
     }
+    tx.commit()?;
     Ok(imported)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{Deck, VaultExport};
+
+    fn vault() -> Connection {
+        let conn = Connection::open_in_memory().expect("open");
+        init(&conn).expect("init");
+        conn
+    }
+
+    fn card(id: &str, modified: &str) -> Shard {
+        Shard {
+            id: id.into(),
+            title: format!("card {id}"),
+            modified_at: modified.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn init_is_idempotent() {
+        let conn = vault();
+        // A second run must not fail — every app launch calls init() on the
+        // existing vault, and migrate() is the only upgrade path we have.
+        init(&conn).expect("second init");
+        init(&conn).expect("third init");
+    }
+
+    #[test]
+    fn import_export_does_not_nest_transactions() {
+        // Regression: import_export holds a transaction and used to call
+        // save_shard, which opened its own. SQLite has no nested BEGIN, so
+        // every JSON import failed with "cannot start a transaction within a
+        // transaction".
+        let conn = vault();
+        let export = VaultExport {
+            shards: vec![card("a", "2026-01-01T00:00:00-05:00")],
+            custom_languages: vec![],
+            decks: vec![Deck {
+                id: "d1".into(),
+                name: "D".into(),
+                ..Default::default()
+            }],
+            review_log: vec![],
+            playbooks: vec![],
+            playbook_nodes: vec![],
+        };
+        assert_eq!(import_export(&conn, &export).expect("import"), 1);
+        assert_eq!(all_shards(&conn).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn bulk_tag_ops_do_not_nest_transactions() {
+        let conn = vault();
+        let mut s = card("a", "2026-01-01T00:00:00-05:00");
+        s.tags = vec!["old".into(), "keep".into()];
+        save_shard(&conn, &s).unwrap();
+
+        assert_eq!(rename_tag(&conn, "old", "new").unwrap(), 1);
+        assert_eq!(delete_tag(&conn, "keep").unwrap(), 1);
+        assert_eq!(
+            retag_shards(&conn, &["a".to_string()], &["fresh".to_string()]).unwrap(),
+            1
+        );
+        assert_eq!(get_shard(&conn, "a").unwrap().unwrap().tags, vec!["fresh"]);
+    }
+
+    #[test]
+    fn deleting_a_card_leaves_a_tombstone() {
+        let conn = vault();
+        save_shard(&conn, &card("a", "2026-01-01T00:00:00-05:00")).unwrap();
+        delete_shard(&conn, "a").unwrap();
+
+        let stones = all_tombstones(&conn).unwrap();
+        assert_eq!(stones.len(), 1);
+        assert_eq!(stones[0].0, "shard");
+        assert_eq!(stones[0].1, "a");
+        assert!(!stones[0].2.is_empty(), "deleted_at must be stamped");
+    }
+
+    #[test]
+    fn delete_all_tombstones_every_card() {
+        let conn = vault();
+        for id in ["a", "b", "c"] {
+            save_shard(&conn, &card(id, "2026-01-01T00:00:00-05:00")).unwrap();
+        }
+        assert_eq!(delete_all_shards(&conn).unwrap(), 3);
+        // Without one tombstone per card the whole library would flow back in
+        // from the next merge.
+        assert_eq!(all_tombstones(&conn).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn re_saving_a_deleted_card_clears_its_tombstone() {
+        let conn = vault();
+        save_shard(&conn, &card("a", "2026-01-01T00:00:00-05:00")).unwrap();
+        delete_shard(&conn, "a").unwrap();
+        save_shard(&conn, &card("a", "2026-02-01T00:00:00-05:00")).unwrap();
+        assert!(all_tombstones(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn review_log_natural_key_rejects_duplicates() {
+        let conn = vault();
+        save_shard(&conn, &card("a", "2026-01-01T00:00:00-05:00")).unwrap();
+        // Same (shard_id, ts) twice: the second is the same logical review and
+        // must collapse rather than double-count the heatmap.
+        for _ in 0..2 {
+            conn.execute(
+                "INSERT OR IGNORE INTO review_log (shard_id, deck_id, day, ts, rating, algorithm)
+                 VALUES ('a', 'default', '2026-01-01', '2026-01-01T10:00:00-05:00', 'good', 'sm2')",
+                [],
+            )
+            .unwrap();
+        }
+        assert_eq!(all_review_log(&conn).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn settings_are_stamped_and_split_by_allowlist() {
+        let conn = vault();
+        set_setting(&conn, "fsrs_params", "{}").unwrap();
+        set_setting(&conn, "ui_theme", "dark").unwrap();
+
+        let synced = synced_settings(&conn).unwrap();
+        let keys: Vec<&str> = synced.iter().map(|(k, _, _)| k.as_str()).collect();
+        assert_eq!(keys, vec!["fsrs_params"], "ui_theme is device-local");
+        assert!(!synced[0].2.is_empty(), "modified_at must be stamped");
+    }
 }
