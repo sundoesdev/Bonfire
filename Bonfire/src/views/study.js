@@ -5,6 +5,7 @@ import { DIFFICULTIES, FAMILIARITY_ORDER, ALL_DECKS, getDifficulty, isFoundation
 import { highlightInto } from "../highlight.js";
 import { mdLite } from "../markdown.js";
 import { confirmDialog } from "../components/confirm.js";
+import { syncNow, syncAfterCard } from "../sync.js";
 
 // Whether the CodeMirror answer editor starts in VIM mode (persisted `editor_vim`).
 let vimEnabled = false;
@@ -730,6 +731,11 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
     document.body.classList.add("studying");
   }
 
+  // Pull before the session starts, so a session begun on this machine builds on
+  // whatever was studied elsewhere. Not awaited — the queue is already built and
+  // a slow remote must never delay the first card.
+  syncNow(ctx);
+
   const session = {
     queue: queue.slice(),
     index: 0,
@@ -781,6 +787,11 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
     document.body.classList.remove("studying");
     container.innerHTML = "";
     container.appendChild(summary());
+    // Publish the session the moment it ends — completed or quit early. This is
+    // what makes picking up on another machine work, and it is also what keeps
+    // the conflict window down to "studied the same card on two machines during
+    // overlapping sessions", which for one person is effectively impossible.
+    syncNow(ctx);
   }
 
   // When the queue empties: first (for a deck-focused session) offer to continue to
@@ -898,6 +909,9 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
             /* ignore */
           }
         }
+        // Opt-in only (Settings → Sync). Inside the same detached block as the
+        // review write, so it can never gate the UI advance either.
+        syncAfterCard(ctx);
       })();
 
       session.stats.reviewed++;

@@ -16,6 +16,7 @@ import { openCommandPalette } from "./components/commandPalette.js";
 import { confirmDialog } from "./components/confirm.js";
 import { loadAppearance } from "./theme.js";
 import { checkForUpdate, applyUpdate } from "./update.js";
+import { syncNow } from "./sync.js";
 
 const DECK_KEY = "current_deck";
 
@@ -246,6 +247,21 @@ window.addEventListener("DOMContentLoaded", async () => {
     updateBadge.addEventListener("click", () => applyUpdate());
     checkForUpdate(ctx, updateBadge);
   }
+
+  // Pull the vault on launch so this machine starts from wherever the last one
+  // left off. Deliberately not awaited: the UI is already usable, and a slow or
+  // unreachable remote must never delay startup. No-op unless sync is set up.
+  const syncBadge = document.querySelector("#sync-badge");
+  if (syncBadge) {
+    syncBadge.addEventListener("click", () => navigate("settings"));
+  }
+  syncNow(ctx).then((summary) => {
+    // Only re-render if something actually arrived, so a routine no-op sync
+    // can't yank the view out from under the user.
+    if (summary && !summary.startsWith("Up to date") && !ctx.studyActive) {
+      navigate(currentView());
+    }
+  });
 
   // Global shortcuts: Ctrl+P palette, Ctrl+N quick capture, Ctrl+K library, Ctrl+D study.
   window.addEventListener("keydown", async (e) => {
