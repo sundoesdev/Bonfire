@@ -14,6 +14,12 @@ pub struct MediaItem {
     pub caption: String,
     /// "question" (shown with the prompt) or "answer" (shown on reveal).
     pub side: String,
+    /// Vault-only: the file this attachment lives in (`media/<id>.png`) when the
+    /// card is written to a sync vault, where blobs become real files instead of
+    /// base64 (see `vault.rs`). Empty everywhere else, and omitted from JSON
+    /// exports so the standalone export format is unchanged.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub file: String,
 }
 
 impl Default for MediaItem {
@@ -24,6 +30,7 @@ impl Default for MediaItem {
             data_url: String::new(),
             caption: String::new(),
             side: "question".to_string(),
+            file: String::new(),
         }
     }
 }
@@ -173,6 +180,22 @@ pub struct PlaybookNode {
 pub struct PlaybookDetail {
     pub playbook: Playbook,
     pub nodes: Vec<PlaybookNode>,
+}
+
+/// The losing side of a sync conflict, held so a genuine double-edit is never
+/// silently discarded — surfaced in Settings → Sync for the user to look at.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SyncConflict {
+    pub id: i64,
+    /// "shard" | "deck" | "playbook".
+    pub entity: String,
+    pub entity_id: String,
+    pub detected_at: String,
+    /// The device that recorded it, so the UI can say where the loser came from.
+    pub device_id: String,
+    /// The discarded record, pretty-printed JSON.
+    pub losing_json: String,
 }
 
 /// One recorded review event, used for the study heatmap / streak analytics.

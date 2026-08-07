@@ -25,4 +25,7 @@ serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
+# Already in the dependency tree via tauri — declaring it directly pulls nothing
+# new. Used to move card media out of the JSON and into real files in the vault.
+base64 = "0.22"
 

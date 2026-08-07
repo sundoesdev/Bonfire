@@ -133,3 +133,54 @@ pub fn grade_from_rating(rating: &str) -> i64 {
         _ => 3,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_weights_match_the_declared_length() {
+        assert_eq!(DEFAULT_WEIGHTS.len(), W_LEN);
+        assert_eq!(FsrsConfig::default().weights.len(), W_LEN);
+    }
+
+    #[test]
+    fn retrievability_decays_from_one_and_stays_bounded() {
+        // R = (1 + t/9S)^-1: full recall at t=0, monotonically decaying after.
+        assert!((retrievability(0.0, 10.0) - 1.0).abs() < 1e-9);
+        let (a, b) = (retrievability(10.0, 10.0), retrievability(100.0, 10.0));
+        assert!(a > b, "recall probability must decay with elapsed time");
+        assert!(b > 0.0 && a < 1.0);
+    }
+
+    #[test]
+    fn a_new_card_enters_review_and_a_lapse_enters_relearning() {
+        let cfg = FsrsConfig::default();
+        assert_eq!(fsrs(3, 0.0, 0.0, "new", 0, &cfg).state, "review");
+        let lapse = fsrs(1, 10.0, 5.0, "review", 10, &cfg);
+        assert_eq!(lapse.state, "relearning");
+    }
+
+    #[test]
+    fn better_grades_schedule_further_out() {
+        let cfg = FsrsConfig::default();
+        let at = |g| fsrs(g, 10.0, 5.0, "review", 10, &cfg).interval;
+        assert!(at(2) <= at(3) && at(3) <= at(4), "hard <= good <= easy");
+        assert!(at(1) <= at(2), "a lapse must not schedule further than hard");
+    }
+
+    #[test]
+    fn intervals_are_always_at_least_one_day() {
+        let cfg = FsrsConfig::default();
+        // A card with almost no stability must still land tomorrow, not today.
+        assert!(fsrs(1, 0.01, 9.0, "review", 365, &cfg).interval >= 1);
+    }
+
+    #[test]
+    fn ratings_map_to_the_documented_grades() {
+        assert_eq!(grade_from_rating("forgot"), 1);
+        assert_eq!(grade_from_rating("hard"), 2);
+        assert_eq!(grade_from_rating("good"), 3);
+        assert_eq!(grade_from_rating("easy"), 4);
+    }
+}

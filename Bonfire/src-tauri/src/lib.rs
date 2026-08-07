@@ -1,7 +1,9 @@
 mod db;
 mod fsrs;
+mod merge;
 mod models;
 mod sm2;
+mod vault;
 
 use models::{DayCount, DayDetail, Deck, Playbook, PlaybookDetail, PlaybookNode, Shard, VaultExport};
 use rusqlite::Connection;
