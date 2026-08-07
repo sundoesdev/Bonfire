@@ -1,5 +1,6 @@
 use crate::models::{
-    DayCount, DayDetail, DeckCount, Deck, Playbook, PlaybookNode, ReviewLogEntry, Shard, VaultExport,
+    DayCount, DayDetail, DeckCount, Deck, Playbook, PlaybookNode, ReviewLogEntry, Shard,
+    SyncConflict, VaultExport,
 };
 use rusqlite::{params, Connection, Result};
 use uuid::Uuid;
@@ -287,6 +288,47 @@ pub fn drop_tombstone(conn: &Connection, entity: &str, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Record the losing side of a conflict the merge resolved by recency.
+pub fn record_conflict(
+    conn: &Connection,
+    entity: &str,
+    entity_id: &str,
+    device_id: &str,
+    losing_json: &str,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO sync_conflicts (entity, entity_id, detected_at, device_id, losing_json)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![entity, entity_id, now_iso(), device_id, losing_json],
+    )?;
+    Ok(())
+}
+
+/// Unresolved conflicts, newest first.
+pub fn list_conflicts(conn: &Connection) -> Result<Vec<SyncConflict>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, entity, entity_id, detected_at, device_id, losing_json
+         FROM sync_conflicts ORDER BY id DESC",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(SyncConflict {
+            id: r.get(0)?,
+            entity: r.get(1)?,
+            entity_id: r.get(2)?,
+            detected_at: r.get(3)?,
+            device_id: r.get(4)?,
+            losing_json: r.get(5)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// Dismiss a conflict once the user has dealt with it.
+pub fn delete_conflict(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute("DELETE FROM sync_conflicts WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
 /// All tombstones as `(entity, id, deleted_at)`.
 pub fn all_tombstones(conn: &Connection) -> Result<Vec<(String, String, String)>> {
     let mut stmt =
@@ -458,11 +500,27 @@ pub fn save_shard(conn: &Connection, s: &Shard) -> Result<()> {
     tx.commit()
 }
 
+/// Write a shard exactly as the merge decided, without opening a transaction.
+///
+/// Unlike `save_shard` this does **not** clear the card's tombstone: the merge
+/// has already settled delete-vs-edit, and re-deriving it here would undo that.
+pub fn save_shard_merged(conn: &Connection, s: &Shard) -> Result<()> {
+    save_shard_row(conn, s)
+}
+
 /// The body of `save_shard`, without opening a transaction of its own.
 ///
 /// SQLite has no nested `BEGIN`, so any caller that already holds a transaction
 /// (`import_export`, and the sync merge) must use this rather than `save_shard`.
 fn save_shard_in_tx(conn: &Connection, s: &Shard) -> Result<()> {
+    save_shard_row(conn, s)?;
+    // Saving a card that was previously deleted here revives it deliberately —
+    // drop the tombstone so the next merge doesn't re-delete it.
+    drop_tombstone(conn, "shard", &s.id)
+}
+
+/// The raw row + membership write shared by every save path.
+fn save_shard_row(conn: &Connection, s: &Shard) -> Result<()> {
     let tags = serde_json::to_string(&s.tags).unwrap_or_else(|_| "[]".into());
     let related = serde_json::to_string(&s.related_ids).unwrap_or_else(|_| "[]".into());
     let media = serde_json::to_string(&s.media).unwrap_or_else(|_| "[]".into());
@@ -506,10 +564,7 @@ fn save_shard_in_tx(conn: &Connection, s: &Shard) -> Result<()> {
             )?;
         }
     }
-    sync_legacy_deck(conn, &s.id)?;
-    // Saving a card that was previously deleted here revives it deliberately —
-    // drop the tombstone so the next merge doesn't re-delete it.
-    drop_tombstone(conn, "shard", &s.id)
+    sync_legacy_deck(conn, &s.id)
 }
 
 pub fn delete_shard(conn: &Connection, id: &str) -> Result<()> {
@@ -647,6 +702,15 @@ pub fn save_deck(conn: &Connection, d: &Deck) -> Result<()> {
 /// it still exists (browsable via "All decks", flagged by the integrity scanner).
 pub fn delete_deck(conn: &Connection, id: &str) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
+    delete_deck_in_tx(conn, id)?;
+    add_tombstone(conn, "deck", id)?;
+    tx.commit()
+}
+
+/// `delete_deck` without a transaction and without writing a tombstone — for the
+/// merge, which already holds a transaction and has itself decided what is
+/// deleted (re-deriving a tombstone here would undo that decision).
+pub fn delete_deck_in_tx(conn: &Connection, id: &str) -> Result<()> {
     conn.execute("DELETE FROM card_decks WHERE deck_id = ?1", params![id])?;
     // Re-sync the legacy mirror for any card whose mirror pointed at this deck
     // (to its first remaining real membership, or '' if none).
@@ -658,8 +722,7 @@ pub fn delete_deck(conn: &Connection, id: &str) -> Result<()> {
         params![id, DEBT_DECK_ID],
     )?;
     conn.execute("DELETE FROM decks WHERE id = ?1", params![id])?;
-    add_tombstone(conn, "deck", id)?;
-    tx.commit()
+    Ok(())
 }
 
 /// Rename a tag across every shard. Renaming onto an existing tag merges them
@@ -897,12 +960,18 @@ pub fn save_playbook(conn: &Connection, p: &Playbook) -> Result<()> {
 /// the library and every deck they belong to.
 pub fn delete_playbook(conn: &Connection, id: &str) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
-    conn.execute("DELETE FROM playbook_nodes WHERE playbook_id = ?1", params![id])?;
-    conn.execute("DELETE FROM playbooks WHERE id = ?1", params![id])?;
+    delete_playbook_in_tx(conn, id)?;
     // Nodes carry no timestamps of their own and travel inside the playbook
     // record, so one tombstone for the playbook covers the whole tree.
     add_tombstone(conn, "playbook", id)?;
     tx.commit()
+}
+
+/// `delete_playbook` without a transaction or a tombstone — see `delete_deck_in_tx`.
+pub fn delete_playbook_in_tx(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM playbook_nodes WHERE playbook_id = ?1", params![id])?;
+    conn.execute("DELETE FROM playbooks WHERE id = ?1", params![id])?;
+    Ok(())
 }
 
 /// Replace ALL nodes of a playbook with the given list. The frontend owns the tree in
@@ -914,6 +983,17 @@ pub fn save_playbook_nodes(
     nodes: &[PlaybookNode],
 ) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
+    save_playbook_nodes_in_tx(conn, playbook_id, nodes)?;
+    tx.commit()
+}
+
+/// `save_playbook_nodes` without opening a transaction — for callers that
+/// already hold one (SQLite has no nested `BEGIN`).
+pub fn save_playbook_nodes_in_tx(
+    conn: &Connection,
+    playbook_id: &str,
+    nodes: &[PlaybookNode],
+) -> Result<()> {
     conn.execute(
         "DELETE FROM playbook_nodes WHERE playbook_id = ?1",
         params![playbook_id],
@@ -925,7 +1005,7 @@ pub fn save_playbook_nodes(
             params![n.id, playbook_id, n.card_id, n.parent_id, n.position],
         )?;
     }
-    tx.commit()
+    Ok(())
 }
 
 /// Distinct card ids referenced by any playbook (drives the "exclude playbook cards
