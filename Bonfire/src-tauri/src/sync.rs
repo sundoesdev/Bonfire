@@ -528,6 +528,54 @@ mod tests {
     }
 
     #[test]
+    fn two_users_on_separate_remotes_never_see_each_other() {
+        // The shared-with-a-friend case: each person points Hearth at their own
+        // private vault. The remote is per-install, so nothing should cross.
+        let t = Tmp::new("twousers");
+        let mine = bare(&t.0.join("mine.git"));
+        let theirs = bare(&t.0.join("theirs.git"));
+
+        let me = Device::new(&t.0, "me", &mine);
+        let friend = Device::new(&t.0, "friend", &theirs);
+
+        me.add("m1", "my card", "2026-01-01T00:00:00-05:00");
+        friend.add("f1", "their card", "2026-01-01T00:00:00-05:00");
+        me.sync().unwrap();
+        friend.sync().unwrap();
+
+        // Their second machine pulls from *their* remote only.
+        let friend2 = Device::new(&t.0, "friend2", &theirs);
+        friend2.sync().unwrap();
+
+        assert_eq!(me.titles(), vec!["my card"]);
+        assert_eq!(friend.titles(), vec!["their card"]);
+        assert_eq!(friend2.titles(), vec!["their card"], "their vault follows them");
+
+        // Re-syncing everyone must not leak either way.
+        me.sync().unwrap();
+        friend.sync().unwrap();
+        assert_eq!(me.titles(), vec!["my card"], "my vault stayed mine");
+        assert_eq!(friend.titles(), vec!["their card"], "and theirs stayed theirs");
+    }
+
+    #[test]
+    fn a_fresh_install_starts_blank_and_the_remote_repopulates_it() {
+        // The documented fresh-install contract: a new machine's vault starts
+        // empty and the configured remote is the source of truth.
+        let t = Tmp::new("freshinstall");
+        let remote = bare(&t.0.join("remote.git"));
+
+        let first = Device::new(&t.0, "first", &remote);
+        first.add("a", "studied earlier", "2026-01-01T00:00:00-05:00");
+        first.sync().unwrap();
+
+        let reinstalled = Device::new(&t.0, "reinstalled", &remote);
+        assert!(reinstalled.titles().is_empty(), "a fresh vault starts blank");
+        reinstalled.sync().unwrap();
+        assert_eq!(reinstalled.titles(), vec!["studied earlier"], "the remote restores it");
+    }
+
+    #[test]
     fn media_survives_a_round_trip_between_devices() {
         let t = Tmp::new("media");
         let remote = bare(&t.0.join("remote.git"));
