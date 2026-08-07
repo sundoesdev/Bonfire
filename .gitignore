@@ -1,2 +1,5 @@
 # Claude Code
 CLAUDE.md
+
+# Local vault backups — these are real study databases, never commit them.
+backups/
