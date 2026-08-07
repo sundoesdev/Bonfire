@@ -38,6 +38,14 @@ export const addCustomLanguage = (name) => invoke("add_custom_language", { name 
 export const removeCustomLanguage = (name) => invoke("remove_custom_language", { name });
 export const exportToJson = (path) => invoke("export_to_json", { path });
 export const importFromJson = (path) => invoke("import_from_json", { path });
+// Sync: opt-in git-backed vault (see docs/SYNC.md). With no remote configured
+// these are never called and Hearth works exactly as it did offline.
+export const syncConfigure = (remote) => invoke("sync_configure", { remote });
+export const syncNow = () => invoke("sync_now");
+export const syncStatus = () => invoke("sync_status");
+export const listSyncConflicts = () => invoke("list_sync_conflicts");
+export const resolveSyncConflict = (id, restore = false) =>
+  invoke("resolve_sync_conflict", { id, restore });
 
 const JSON_FILTER = [{ name: "JSON", extensions: ["json"] }];
 

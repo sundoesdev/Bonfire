@@ -1,8 +1,10 @@
 mod db;
 mod fsrs;
+mod git;
 mod merge;
 mod models;
 mod sm2;
+mod sync;
 mod vault;
 
 use models::{DayCount, DayDetail, Deck, Playbook, PlaybookDetail, PlaybookNode, Shard, VaultExport};
@@ -10,9 +12,11 @@ use rusqlite::Connection;
 use std::sync::Mutex;
 use tauri::{Manager, State};
 
-/// App-wide state: the SQLite connection behind a mutex.
+/// App-wide state: the SQLite connection behind a mutex, plus the app-data
+/// directory (sync needs it to locate the vault repo alongside vault.db).
 struct AppState {
     conn: Mutex<Connection>,
+    dir: std::path::PathBuf,
 }
 
 /// Helper: lock the connection or return a stringified error.
@@ -469,6 +473,64 @@ fn import_from_json(state: State<AppState>, path: String) -> Result<usize, Strin
     with_conn(&state, |c| db::import_export(c, &export))
 }
 
+// ------------------------------------------------------------------- sync
+//
+// Sync is opt-in: with no remote configured Hearth never invokes git and works
+// exactly as it did before. See `sync.rs` for the loop and docs/SYNC.md for the
+// merge rules.
+
+/// Point this device at a vault remote (empty string disconnects it).
+#[tauri::command]
+fn sync_configure(state: State<AppState>, remote: String) -> Result<(), String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    sync::configure(&conn, &state.dir, &remote)
+}
+
+/// Run one sync. Returns a short summary for the toast.
+#[tauri::command]
+fn sync_now(state: State<AppState>) -> Result<String, String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    sync::sync_now(&conn, &state.dir)
+}
+
+#[tauri::command]
+fn sync_status(state: State<AppState>) -> Result<sync::SyncStatus, String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    Ok(sync::status(&conn))
+}
+
+/// Versions discarded by a last-write-wins resolution, newest first.
+#[tauri::command]
+fn list_sync_conflicts(state: State<AppState>) -> Result<Vec<models::SyncConflict>, String> {
+    with_conn(&state, db::list_conflicts)
+}
+
+/// Dismiss a conflict, optionally restoring the version that lost.
+#[tauri::command]
+fn resolve_sync_conflict(
+    state: State<AppState>,
+    id: i64,
+    restore: Option<bool>,
+) -> Result<(), String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    if restore.unwrap_or(false) {
+        let entry = db::list_conflicts(&conn)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|c| c.id == id)
+            .ok_or("That conflict no longer exists")?;
+        if entry.entity == "shard" {
+            let mut shard: Shard =
+                serde_json::from_str(&entry.losing_json).map_err(|e| e.to_string())?;
+            // Stamp it as the newest edit, or the next merge would discard it
+            // again for exactly the reason it lost the first time.
+            shard.modified_at = now_iso();
+            db::save_shard(&conn, &shard).map_err(|e| e.to_string())?;
+        }
+    }
+    db::delete_conflict(&conn, id).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -481,6 +543,7 @@ pub fn run() {
             db::init(&conn)?;
             app.manage(AppState {
                 conn: Mutex::new(conn),
+                dir,
             });
             Ok(())
         })
@@ -517,6 +580,11 @@ pub fn run() {
             remove_custom_language,
             export_to_json,
             import_from_json,
+            sync_configure,
+            sync_now,
+            sync_status,
+            list_sync_conflicts,
+            resolve_sync_conflict,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
