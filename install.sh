@@ -307,7 +307,14 @@ main() {
   say "Building Hearth (this takes a few minutes the first time)"
   cd "$APP_DIR"
   npm install
-  npm run tauri build
+  # --no-bundle: we install the binary directly and write our own .desktop entry,
+  # so the .deb/.rpm/.AppImage bundles would be built and then thrown away. They
+  # are also the most fragile part of the build — AppImage packaging shells out
+  # to linuxdeploy, which is itself an AppImage and needs FUSE, and fails on
+  # machines without libfuse2, in containers, or with no /dev/fuse. Skipping it
+  # removes an entire class of install failure and is meaningfully faster.
+  # (To produce distributable installers, run `npm run tauri build` yourself.)
+  npm run tauri build -- --no-bundle
 
   local built
   built="$APP_DIR/src-tauri/target/release/bonfire"
