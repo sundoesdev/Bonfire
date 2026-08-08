@@ -77,6 +77,12 @@ authentication — **Hearth never sees or stores a password or token.**
 2. **Point Hearth at it** — either at the `install.sh` prompt, or afterwards in
    **Settings → Sync** by pasting the URL and clicking Connect.
 
+   The installer also asks **who signs your vault commits** and makes you confirm
+   it. This is set with `git config --local` on the vault repository only, so it
+   never touches your global git identity or any other repo. If you have a work
+   account configured globally, this is what stops your study commits being
+   attributed to it.
+
 3. **On your second machine**, install Hearth the same way and give it the
    **same** repository URL. Its vault starts empty and the first sync pulls
    everything down.
@@ -152,9 +158,22 @@ it yourself if you want it gone.
 **"git is not installed or not on PATH."** Sync shells out to `git`. Install it
 (`apt install git` / `pacman -S git`) and reopen Hearth.
 
+**My vault commits are signed by the wrong account.** If you never set a vault
+identity, git falls back to your global one — which on a work machine is usually
+the work account. Fix it without reinstalling:
+
+```bash
+./install.sh --identity
+```
+
+That prompts for a name and email, shows you what it will use, asks you to
+confirm, and writes it with `git config --local` on the vault repository only.
+New commits use it immediately. Commits already pushed keep their original
+author — git does not rewrite history.
+
 **Sync fails with `Author identity unknown` or similar.** `git` cannot commit
-without a name and email. Hearth sets a repo-local fallback so this should not
-happen, but you can set your own globally:
+without a name and email. Run `./install.sh --identity` to set one for the
+vault, or set a global default:
 
 ```bash
 git config --global user.name "Your Name"

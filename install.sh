@@ -9,6 +9,7 @@
 #   ./install.sh              build, install, and offer to set up vault sync
 #   ./install.sh --fresh      also wipe the local vault first (gated, see below)
 #   ./install.sh --no-sync    skip the vault prompt entirely
+#   ./install.sh --identity   only re-set who signs vault commits, then exit
 #
 set -euo pipefail
 
@@ -25,10 +26,12 @@ DESKTOP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 
 FRESH=0
 ASK_SYNC=1
+IDENTITY_ONLY=0
 for arg in "$@"; do
   case "$arg" in
-    --fresh)   FRESH=1 ;;
-    --no-sync) ASK_SYNC=0 ;;
+    --fresh)    FRESH=1 ;;
+    --no-sync)  ASK_SYNC=0 ;;
+    --identity) IDENTITY_ONLY=1 ;;
     -h|--help) awk 'NR>2 && /^#/ { sub(/^# ?/, ""); print; next } NR>2 { exit }' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "Unknown option: $arg (try --help)" >&2; exit 2 ;;
   esac
@@ -117,18 +120,65 @@ Install Node 18+ and re-run:
   Any distro:         https://github.com/nvm-sh/nvm"
 }
 
-# `git commit` hard-fails with no identity configured, which would surface later
-# as a baffling mid-session sync error rather than here where we can explain it.
-ensure_git_identity() {
-  git config --get user.email >/dev/null 2>&1 && git config --get user.name >/dev/null 2>&1 && return
-  say "git needs an identity before it can commit"
-  info "Hearth's vault sync commits on your behalf, so git needs a name and email."
-  local name email
-  read -rp "    Your name:  " name
-  read -rp "    Your email: " email
-  [ -n "$name" ] && [ -n "$email" ] || die "Both a name and an email are required."
-  git config --global user.name "$name"
-  git config --global user.email "$email"
+# Choose, and confirm, the identity that signs vault commits.
+#
+# This is always asked, never inferred. Falling back to the global git identity
+# silently is how vault commits end up signed by whichever account happens to be
+# configured for work — the identity is set with `git config --local` on the
+# vault repository only, so it never touches the global config or any other repo.
+configure_vault_identity() {
+  mkdir -p "$VAULT_DIR"
+  [ -d "$VAULT_DIR/.git" ] || git -C "$VAULT_DIR" init -q -b main
+
+  # Default to whatever the vault is already signing as, falling back to the
+  # global identity on a first run. On the repair path that means Enter keeps the
+  # current setting rather than silently reverting to the global one.
+  local g_name g_email name email source
+  g_name="$(git -C "$VAULT_DIR" config --local user.name 2>/dev/null || true)"
+  g_email="$(git -C "$VAULT_DIR" config --local user.email 2>/dev/null || true)"
+  source="this vault's current"
+  if [ -z "$g_name$g_email" ]; then
+    g_name="$(git config --global user.name 2>/dev/null || true)"
+    g_email="$(git config --global user.email 2>/dev/null || true)"
+    source="your global git"
+  fi
+
+  say "Who signs your vault commits?"
+  cat <<'EOF'
+    Every sync makes a git commit. This sets the name and email on the vault
+    repository ONLY — your global git identity and every other repository are
+    left alone.
+EOF
+  if [ -n "$g_name$g_email" ]; then
+    printf '\n    Using %s identity as the default:\n      %s <%s>\n' \
+      "$source" "${g_name:-unset}" "${g_email:-unset}"
+    printf '    Press Enter to keep it, or type something else.\n'
+  fi
+
+  while :; do
+    printf '\n'
+    read -rp "    Name  ${g_name:+[$g_name]}: " name
+    read -rp "    Email ${g_email:+[$g_email]}: " email
+    name="${name:-$g_name}"
+    email="${email:-$g_email}"
+
+    if [ -z "$name" ] || [ -z "$email" ]; then
+      printf '\n    Both a name and an email are required.\n'
+      continue
+    fi
+
+    printf '\n    Vault commits will be signed as:\n      \033[1m%s <%s>\033[0m\n' "$name" "$email"
+    local ok
+    read -rp "    Correct? [Y/n] " ok
+    case "${ok:-y}" in
+      [Yy]*|"") break ;;
+      *) g_name="$name"; g_email="$email" ;;   # re-offer what they just typed
+    esac
+  done
+
+  git -C "$VAULT_DIR" config --local user.name "$name"
+  git -C "$VAULT_DIR" config --local user.email "$email"
+  info "Set on $VAULT_DIR only (git config --local)."
 }
 
 # ----------------------------------------------------------------- vault
@@ -193,12 +243,19 @@ setup_sync() {
     Leave blank to skip — Hearth works fully offline and you can set this up
     later in Settings → Sync.
 EOF
-  local remote
-  read -rp "    Vault remote URL: " remote || true
+  # Pre-fill an already-configured remote so re-running never makes you retype it.
+  local current remote
+  current="$(git -C "$VAULT_DIR" remote get-url origin 2>/dev/null || true)"
+  [ -n "$current" ] && printf '\n    Currently connected to: %s\n    Press Enter to keep it.\n' "$current"
+  read -rp "    Vault remote URL${current:+ [keep]}: " remote || true
+  remote="${remote:-$current}"
   [ -n "${remote:-}" ] || { info "Skipped — sync is off."; return 0; }
 
-  ensure_git_identity
   mkdir -p "$DATA_DIR"
+  configure_vault_identity
+  git -C "$VAULT_DIR" remote get-url origin >/dev/null 2>&1 \
+    && git -C "$VAULT_DIR" remote set-url origin "$remote" \
+    || git -C "$VAULT_DIR" remote add origin "$remote"
   # Seeded directly into the settings table so the app picks it up on first run
   # without needing a round trip through the GUI.
   python3 - "$DATA_DIR/vault.db" "$remote" <<'PY'
@@ -225,6 +282,16 @@ PY
 record() { echo "$1" >> "$MANIFEST"; }
 
 main() {
+  # --identity is a repair path for an already-installed Hearth whose vault got
+  # signed by the wrong account. No build, no reinstall.
+  if [ "$IDENTITY_ONLY" -eq 1 ]; then
+    configure_vault_identity
+    say "Done"
+    info "New commits will use this identity. Commits already pushed keep their"
+    info "original author — git does not rewrite history."
+    exit 0
+  fi
+
   [ -d "$APP_DIR/src-tauri" ] || die "Run this from a Hearth checkout (expected $APP_DIR/src-tauri)."
 
   local family
