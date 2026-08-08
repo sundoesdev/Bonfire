@@ -192,6 +192,24 @@ correct — Hearth publishes to it on the first sync.
 missing or is the 4.0 series rather than 4.1. Install the 4.1 development
 package for your distro and re-run `./install.sh`.
 
+**`failed to bundle project` / `failed to run linuxdeploy`.** This is the
+AppImage packaging step, and `install.sh` does not use it — the installer builds
+with `--no-bundle` because it installs the binary directly and writes its own
+launcher entry. If you hit this, you ran `npm run tauri build` by hand.
+
+`linuxdeploy` is itself an AppImage and needs FUSE, which fails on machines
+without it, inside containers, and anywhere `/dev/fuse` is unavailable. To build
+just the app:
+
+```bash
+cd Bonfire && npm run tauri build -- --no-bundle
+```
+
+If you genuinely want distributable installers, install FUSE 2
+(`sudo apt-get install libfuse2` on Debian/Ubuntu, `sudo pacman -S fuse2` on
+Arch) and run `npm run tauri build` without the flag. The `.deb`/`.rpm` targets
+alone do not need it: `npm run tauri build -- --bundles deb,rpm`.
+
 **`hearth: command not found` after installing.** `~/.local/bin` is not on your
 `PATH`. Launch it from your application menu, or add that directory to `PATH`.
 
