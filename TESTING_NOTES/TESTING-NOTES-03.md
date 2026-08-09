@@ -7,3 +7,9 @@
 - Perhaps we can speed up the syncing? Why does it take so long? If theres not much we can do there, thats fine, just a brain storm for later
 
 ## UI Changes
+
+- to be announced 
+
+## New Features / Changes 
+
+- During program startup, Hearth should reach out to the source github (branch main), check for a pull, and update the software. There should then be a toast or small notif alerting the user that the software updated (and updated successfully or failed)
