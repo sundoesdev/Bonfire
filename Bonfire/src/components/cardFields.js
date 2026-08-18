@@ -94,10 +94,13 @@ export function buildCardFields(ctx, shard) {
   // the first level (beginner) below.
   const diffOpts = DIFFICULTIES.map((d) => `<option value="${d}">${d}</option>`).join("");
 
-  // The Language row only exists for code presets (the deck preset gates it).
-  const languageField = preset.showLanguage
-    ? `<label>Language</label><select id="cf-lang">${langOpts}</select>`
-    : "";
+  // The Language row exists for code presets — and for any card that already has a
+  // language, so a code card sitting in a prose deck stays editable (and keeps the
+  // highlighting that study.js derives from it) instead of silently losing it.
+  const languageField =
+    preset.showLanguage || shard.language
+      ? `<label>Language</label><select id="cf-lang">${langOpts}</select>`
+      : "";
 
   // Deck memberships (many-to-many): a card can sit in any number of decks, or none.
   // The auto Debt deck is excluded — it's reconciled automatically, not hand-assigned.

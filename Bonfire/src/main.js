@@ -16,9 +16,30 @@ import { openCommandPalette } from "./components/commandPalette.js";
 import { confirmDialog } from "./components/confirm.js";
 import { loadAppearance } from "./theme.js";
 import { checkForUpdate, applyUpdate } from "./update.js";
-import { syncNow } from "./sync.js";
+import { syncNow, isConfigured } from "./sync.js";
 
 const DECK_KEY = "current_deck";
+
+// Boot splash (#boot-overlay in index.html). Held for at least MIN so a fast or
+// sync-less start reads as deliberate rather than a flicker, and never longer than
+// MAX so an unreachable remote can't strand the user behind it.
+const BOOT_MIN_MS = 600;
+const BOOT_MAX_MS = 15000;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function bootStatus(text) {
+  const el = document.querySelector("#boot-status");
+  if (el) el.textContent = text;
+}
+
+function dismissBoot() {
+  const el = document.querySelector("#boot-overlay");
+  if (!el) return;
+  el.classList.add("leaving");
+  el.addEventListener("transitionend", () => el.remove(), { once: true });
+  setTimeout(() => el.remove(), 600); // fallback if the transition never fires
+}
 
 const state = {
   allShards: [], // every card, across all decks
@@ -173,7 +194,9 @@ const ctx = {
     navigate("study", { quick: true, deckId });
   },
   weakStudy: () => navigate("study", { weak: true }),
-  reviewCard: (id) => navigate("study", { single: id }),
+  // `reopen` is set only by the card modal's own Review button, which wants the
+  // modal back afterwards. From the Library / Dashboard / Debt list it must stay shut.
+  reviewCard: (id, opts = {}) => navigate("study", { single: id, reopen: !!opts.reopen }),
   // Study an explicit set of cards in one session (e.g. "Study all" from the
   // Card Debt list) — the queue is exactly these ids, no due/cap filtering.
   studyCards: (ids) => navigate("study", { cards: ids }),
@@ -183,6 +206,7 @@ const ctx = {
 };
 
 window.addEventListener("DOMContentLoaded", async () => {
+  const bootStartedAt = Date.now();
   viewEl = document.querySelector("#view");
   deckSwitcher = document.querySelector("#deck-switcher");
 
@@ -249,25 +273,35 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
 
   // Pull the vault on launch so this machine starts from wherever the last one
-  // left off. Deliberately not awaited: the UI is already usable, and a slow or
-  // unreachable remote must never delay startup. No-op unless sync is set up.
+  // left off. The boot splash covers this: the sync holds the single DB mutex, so
+  // nothing behind it can render usefully until it lands. No-op unless sync is set up.
   const syncBadge = document.querySelector("#sync-badge");
   if (syncBadge) {
     syncBadge.addEventListener("click", () => navigate("settings"));
   }
-  syncNow(ctx).then((summary) => {
-    // Only re-render if something actually arrived, so a routine no-op sync
-    // can't yank the view out from under the user.
-    if (summary && !summary.startsWith("Up to date") && !ctx.studyActive) {
+  let bootRendered = false;
+  const startupSync = (async () => {
+    if (!(await isConfigured(ctx))) return;
+    bootStatus("Syncing with remote…");
+    const summary = await syncNow(ctx);
+    // Only reached ahead of the first render when the splash timed out. Re-render
+    // if something actually arrived, so a routine no-op sync can't yank the view
+    // out from under the user — and never onto Study, whose session summary must
+    // survive a sync landing right after the session ended.
+    if (bootRendered && summary && !summary.startsWith("Up to date") && !ctx.studyActive && currentView() !== "study") {
       navigate(currentView());
     }
-  });
+  })();
 
   // Global shortcuts: Ctrl+P palette, Ctrl+N quick capture, Ctrl+K library, Ctrl+D study.
   window.addEventListener("keydown", async (e) => {
     if (!e.ctrlKey) return;
     const k = e.key.toLowerCase();
     if (!["p", "n", "k", "d"].includes(k)) return;
+    // Every one of these is also a vim binding (Ctrl-D half-page, Ctrl-N/Ctrl-P
+    // completion), so inside an editor the editor wins.
+    const t = e.target;
+    if (t && (t.closest?.(".CodeMirror") || t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
     e.preventDefault();
     // During a study session these shortcuts all "leave" — gate them (item 6).
     if (!(await guardStudy())) return;
@@ -277,5 +311,9 @@ window.addEventListener("DOMContentLoaded", async () => {
     else if (k === "d") ctx.quickStudy();
   });
 
+  await Promise.race([startupSync, sleep(BOOT_MAX_MS)]);
+  bootStatus("Ready");
+  bootRendered = true;
   navigate("dashboard");
+  setTimeout(dismissBoot, Math.max(0, BOOT_MIN_MS - (Date.now() - bootStartedAt)));
 });

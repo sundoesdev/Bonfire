@@ -69,8 +69,27 @@ pub struct VaultData {
 
 // ---------------------------------------------------------------- database
 
+/// Drop the derived Debt-deck membership from a card.
+///
+/// The Debt deck is recomputed locally from due dates by `db::sync_debt_deck`, so it
+/// must never reach the merge or the file tree. `read_db` and `write_tree` have to
+/// strip it *identically*: if only one side does, then on a device that is behind —
+/// where every card is overdue and so carries `card-debt` locally — every card's
+/// content differs from the remote's and the merge reports a conflict for the entire
+/// library. That asymmetry is exactly the bug this shared helper exists to prevent.
+fn strip_debt_deck(card: &mut Shard) {
+    card.deck_ids.retain(|d| d != db::DEBT_DECK_ID);
+    if card.deck_id == db::DEBT_DECK_ID {
+        card.deck_id = card.deck_ids.first().cloned().unwrap_or_default();
+    }
+}
+
 /// Snapshot the database into a `VaultData`.
 pub fn read_db(conn: &Connection) -> Result<VaultData> {
+    let mut cards = db::all_shards(conn)?;
+    for card in cards.iter_mut() {
+        strip_debt_deck(card);
+    }
     let mut playbooks = Vec::new();
     for p in db::all_playbooks(conn)? {
         let nodes = db::playbook_nodes(conn, &p.id)?;
@@ -80,7 +99,7 @@ pub fn read_db(conn: &Connection) -> Result<VaultData> {
         });
     }
     Ok(VaultData {
-        cards: db::all_shards(conn)?,
+        cards,
         decks: db::all_decks(conn)?,
         playbooks,
         reviews: db::all_review_log(conn)?,
@@ -218,13 +237,10 @@ pub fn write_tree(dir: &Path, data: &VaultData) -> std::io::Result<()> {
 
     for card in &data.cards {
         let mut card = card.clone();
-        // The Debt deck is derived locally from due dates by `sync_debt_deck`.
-        // Syncing it would churn every card's file whenever a due date passed on
-        // one machine, so membership is dropped here and recomputed on read.
-        card.deck_ids.retain(|d| d != db::DEBT_DECK_ID);
-        if card.deck_id == db::DEBT_DECK_ID {
-            card.deck_id = card.deck_ids.first().cloned().unwrap_or_default();
-        }
+        // Syncing the derived Debt deck would churn every card's file whenever a due
+        // date passed on one machine, so membership is dropped here (see
+        // `strip_debt_deck`) and recomputed on read.
+        strip_debt_deck(&mut card);
         for m in card.media.iter_mut() {
             if let Some((bytes, ext)) = decode_data_url(&m.data_url) {
                 let name = format!("{}.{}", safe_name(&m.id), ext);
@@ -500,6 +516,41 @@ mod tests {
         assert_eq!(
             db::get_setting(&dst, "fsrs_params").unwrap().unwrap(),
             "{\"requestRetention\":0.9}"
+        );
+    }
+
+    #[test]
+    fn debt_deck_membership_never_reaches_the_merge() {
+        let src = vault_db();
+        let mut c = card("a");
+        c.review_enabled = true;
+        c.review_next = "2020-01-01".into(); // long overdue → lands in the Debt deck
+        db::save_shard(&src, &c).unwrap();
+        db::sync_debt_deck(&src).unwrap();
+        assert!(
+            db::all_shards(&src).unwrap()[0]
+                .deck_ids
+                .iter()
+                .any(|d| d == db::DEBT_DECK_ID),
+            "precondition: an overdue card is in the Debt deck"
+        );
+
+        let local = read_db(&src).unwrap();
+        let dir = TmpDir::new("debt");
+        write_tree(&dir.0, &local).unwrap();
+        let from_tree = read_tree(&dir.0).unwrap();
+
+        assert!(
+            !local.cards[0].deck_ids.iter().any(|d| d == db::DEBT_DECK_ID),
+            "read_db must strip the derived Debt deck"
+        );
+        // merge.rs compares records by their serialized content. If the two sides
+        // disagree here, a device that is behind (every card overdue, so every card
+        // in the Debt deck) reports a conflict for its entire library.
+        assert_eq!(
+            serde_json::to_string(&local.cards[0]).unwrap(),
+            serde_json::to_string(&from_tree.cards[0]).unwrap(),
+            "local and tree must serialize identically or the merge sees a false conflict"
         );
     }
 

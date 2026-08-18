@@ -436,7 +436,7 @@ export async function renderStudy(container, ctx, params = {}) {
       single: true,
       onDone: async () => {
         await ctx.navigate("dashboard");
-        ctx.openShard(shard.id);
+        if (params.reopen) ctx.openShard(shard.id);
       },
     });
     return;
@@ -927,8 +927,10 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
     const type = s.cardType || "basic";
     const isCloze = type === "cloze" && hasClozeMarkers(s.code);
     const isReverse = type === "reverse";
-    // Non-code decks (prose/vocab) render the answer as markdown, not highlighted code.
-    const highlight = ctx.currentPreset().highlight;
+    // Highlighting follows the CARD, not the sidebar deck filter: a C card is still
+    // code when the Library happens to be filtered to a prose deck. Only a card with
+    // no language at all falls back to the deck preset (prose/vocab render as markdown).
+    const highlight = !!s.language || ctx.currentPreset().highlight;
 
     // Reverse cards hide the title (it's the thing to recall); other types show it.
     const headerHtml = isReverse
@@ -1058,6 +1060,13 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       );
       const KEY_RATINGS = { 1: "forgot", 2: "hard", 3: "good", 4: "easy" };
       function onGradeKey(e) {
+        // A single-card review has no nav lock, so the user can leave mid-reveal and
+        // strand this listener — grading a card that is no longer on screen. If the
+        // controls are gone, so are we.
+        if (!document.body.contains(controls)) {
+          document.removeEventListener("keydown", onGradeKey);
+          return;
+        }
         const rating = KEY_RATINGS[e.key];
         if (!rating) return;
         // Defensive: ignore if focus is in an editable field (the answer editor is

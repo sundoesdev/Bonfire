@@ -57,7 +57,7 @@
 
   /* ---- Typography ---- */
   --font-serif: "Fraunces", Georgia, "Times New Roman", serif;
-  --font-mono: ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
+  --font-mono: "JetBrains Mono", "JetBrainsMono Nerd Font", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
 
   /* ---- Legacy aliases (existing component CSS still references these) ---- */
   --panel: var(--surface);
@@ -162,6 +162,64 @@ option { background: var(--input); color: var(--text); }
 @keyframes update-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(0, 120, 212, 0.45); }
   50% { box-shadow: 0 0 0 4px rgba(0, 120, 212, 0); }
+}
+
+/* ---- Boot splash: the ember mark, held while the vault opens and syncs.
+   Token-driven, so it follows Light/Coal & Ember without a second rule set. ---- */
+#boot-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  background: var(--surface-2);
+  animation: boot-in 220ms var(--ease) both;
+  transition: opacity var(--t-slow) var(--ease);
+}
+#boot-overlay.leaving { opacity: 0; }
+/* The pulsing ember ring sits on the wrapper so it can bloom past the glyph. */
+.boot-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 96px;
+  height: 96px;
+  border-radius: var(--r-pill);
+  animation: ember-ring 2.8s var(--ease) -0.6s infinite;
+}
+.boot-mark i {
+  font-size: 64px;
+  line-height: 1;
+  color: var(--accent);
+  animation: ember-flicker 2.8s ease-in-out infinite;
+}
+.boot-word {
+  font-family: var(--font-serif);
+  font-size: 28px;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+.boot-status { font-size: 13px; color: var(--text-2); }
+
+@keyframes boot-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes ember-flicker {
+  0%, 100% { opacity: 0.78; transform: scale(1); filter: drop-shadow(0 0 8px rgba(199, 91, 57, 0.2)); }
+  45% { opacity: 1; transform: scale(1.05); filter: drop-shadow(0 0 14px rgba(199, 91, 57, 0.35)); }
+  70% { opacity: 0.85; transform: scale(1.02); filter: drop-shadow(0 0 10px rgba(199, 91, 57, 0.26)); }
+}
+@keyframes ember-ring {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(199, 91, 57, 0.22); }
+  60% { box-shadow: 0 0 0 22px rgba(199, 91, 57, 0); }
+}
+/* Reduced motion: keep the mark, drop the movement. */
+@media (prefers-reduced-motion: reduce) {
+  #boot-overlay, .boot-mark, .boot-mark i { animation: none; }
 }
 
 /* ---- Sidebar ---- */
@@ -600,7 +658,7 @@ textarea { resize: vertical; }
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
   color: var(--code-text);
-  font-family: monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   padding: 10px;
   white-space: pre;
@@ -608,7 +666,7 @@ textarea { resize: vertical; }
   box-shadow: inset var(--shadow-sm);
 }
 .code-block { min-height: 120px; margin: 4px 0 12px; }
-.code-block code { white-space: pre; font-family: monospace; }
+.code-block code { white-space: pre; font-family: var(--font-mono); }
 .code-editor { min-height: 200px; width: 100%; white-space: pre; }
 .title-big { font-family: var(--font-serif); font-size: 18px; font-weight: 500; margin: 4px 0; }
 .meta-line { color: var(--muted); margin-bottom: 10px; }
@@ -847,7 +905,7 @@ textarea { resize: vertical; }
 
 /* ---- Study session ---- */
 .progress-row { max-width: 760px; margin: 0 auto 4px; }
-.timer { font-family: monospace; font-size: 15px; color: var(--muted-2); }
+.timer { font-family: var(--font-mono); font-size: 15px; color: var(--muted-2); }
 .timer.overtime { color: var(--danger); font-weight: 600; }
 .time-banner {
   max-width: 760px;
@@ -864,6 +922,19 @@ textarea { resize: vertical; }
 /* ---- Answer comparison ---- */
 .compare { display: flex; gap: 12px; }
 .compare-col { flex: 1; min-width: 0; }
+/* Prose answer pane — the markdown counterpart of .code-block, so both columns of
+   the compare view sit on the same surface at the same height. */
+.answer-prose {
+  min-height: 120px;
+  margin: 4px 0 12px;
+  padding: 10px;
+  background: var(--code-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  line-height: 1.55;
+  overflow: auto;
+  box-shadow: inset var(--shadow-sm);
+}
 @media (max-width: 760px) {
   .compare { flex-direction: column; }
 }
@@ -920,6 +991,7 @@ textarea { resize: vertical; }
   color: var(--code-text);
   padding: 1px 5px;
   border-radius: 4px;
+  font-family: var(--font-mono);
   font-size: 0.92em;
 }
 .markdown-body a { color: var(--primary); }
@@ -1047,7 +1119,7 @@ body.studying #sidebar:hover { opacity: 1; }
   color: var(--code-text);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.5;
   padding: 6px 4px;

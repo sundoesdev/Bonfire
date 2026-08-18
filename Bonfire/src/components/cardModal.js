@@ -123,7 +123,9 @@ export function openCardModal(ctx, { id } = {}) {
     body.querySelector("#cm-close").addEventListener("click", close);
     body.querySelector("#cm-review").addEventListener("click", () => {
       close();
-      ctx.reviewCard(shard.id);
+      // Reviewing from inside the modal is a detour: reopen it afterwards so the
+      // user lands back where they were. Every other entry point must not.
+      ctx.reviewCard(shard.id, { reopen: true });
     });
     body.querySelector("#cm-del").addEventListener("click", async () => {
       if (!confirm("Delete this shard?")) return;
