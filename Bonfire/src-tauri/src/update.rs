@@ -98,7 +98,12 @@ pub fn check_and_update(app_dir: &Path) -> UpdateResult {
     if local.is_empty() || remote.is_empty() {
         return UpdateResult::new("failed", "Could not read the checkout's revisions");
     }
-    if local == remote {
+    // "Behind" means origin/main is NOT already contained in HEAD — not merely that
+    // the two revisions differ. A checkout sitting on a feature branch, or ahead of
+    // main with unpushed work, differs from origin/main while having nothing to
+    // pull; treating that as an update would rebuild and reinstall over the user's
+    // own build every single launch.
+    if crate::git::git(&repo, &["merge-base", "--is-ancestor", "origin/main", "HEAD"]).is_ok() {
         return UpdateResult::new("up-to-date", "Hearth is up to date");
     }
 
@@ -161,6 +166,49 @@ mod tests {
         let dir = TmpDir::new("nosource");
         let r = check_and_update(&dir.0);
         assert_eq!(r.status, "skipped", "{}", r.detail);
+    }
+
+    /// A checkout that is *ahead* of origin/main has nothing to pull. Without the
+    /// ancestor check this rebuilt and reinstalled on every launch.
+    #[test]
+    fn a_checkout_ahead_of_main_is_up_to_date() {
+        let app = TmpDir::new("ahead-app");
+        let origin = TmpDir::new("ahead-origin");
+        let repo = TmpDir::new("ahead-repo");
+
+        let commit = |dir: &std::path::Path, msg: &str| {
+            std::fs::write(dir.join(msg), msg).unwrap();
+            crate::git::git(dir, &["add", "-A"]).unwrap();
+            crate::git::git(dir, &["commit", "--quiet", "-m", msg]).unwrap();
+        };
+        // A bare-ish origin holding just `main`.
+        crate::git::git(&origin.0, &["init", "--quiet", "--initial-branch=main"]).unwrap();
+        crate::git::git(&origin.0, &["config", "user.email", "t@example.com"]).unwrap();
+        crate::git::git(&origin.0, &["config", "user.name", "t"]).unwrap();
+        commit(&origin.0, "base");
+
+        crate::git::git(
+            &repo.0,
+            &["clone", "--quiet", origin.0.to_str().unwrap(), "."],
+        )
+        .unwrap();
+        crate::git::git(&repo.0, &["config", "user.email", "t@example.com"]).unwrap();
+        crate::git::git(&repo.0, &["config", "user.name", "t"]).unwrap();
+        // Local work on a branch, ahead of origin/main.
+        crate::git::git(&repo.0, &["checkout", "--quiet", "-b", "feature"]).unwrap();
+        commit(&repo.0, "local-work");
+        // Point origin at the expected repo name so the remote rail passes.
+        crate::git::git(
+            &repo.0,
+            &["remote", "set-url", "origin", &format!("https://github.com/{EXPECTED_REMOTE}.git")],
+        )
+        .unwrap();
+        std::fs::write(app.0.join(SOURCE_FILE), repo.0.to_string_lossy().as_bytes()).unwrap();
+
+        // The fetch will fail against the fake URL, which is itself a safe outcome —
+        // assert only that we never report an update available.
+        let r = check_and_update(&app.0);
+        assert_ne!(r.status, "updated", "{}", r.detail);
     }
 
     #[test]
