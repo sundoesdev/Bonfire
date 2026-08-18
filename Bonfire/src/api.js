@@ -25,6 +25,9 @@ export const savePlaybook = (playbook) => invoke("save_playbook", { playbook });
 export const deletePlaybook = (id) => invoke("delete_playbook", { id });
 export const savePlaybookNodes = (playbookId, nodes) => invoke("save_playbook_nodes", { playbookId, nodes });
 export const playbookCardIds = () => invoke("playbook_card_ids");
+// Writes only the hint column. Never use saveShard for this from the study view —
+// that would push a stale copy of the schedule over what submitReview just wrote.
+export const setShardHint = (id, hint) => invoke("set_shard_hint", { id, hint });
 export const submitReview = (id, rating, durationMs, sessionId, cram = false) =>
   invoke("submit_review", { id, rating, durationMs, sessionId, cram });
 export const reviewHistory = () => invoke("review_history");

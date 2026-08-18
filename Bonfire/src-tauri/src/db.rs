@@ -23,6 +23,7 @@ pub fn init(conn: &Connection) -> Result<()> {
             prompt        TEXT NOT NULL DEFAULT '',
             code          TEXT NOT NULL DEFAULT '',
             description   TEXT NOT NULL DEFAULT '',
+            hint          TEXT NOT NULL DEFAULT '',
             tags          TEXT NOT NULL DEFAULT '[]',
             category      TEXT NOT NULL DEFAULT 'snippet',
             familiarity   TEXT NOT NULL DEFAULT 'fresh',
@@ -141,6 +142,9 @@ fn migrate(conn: &Connection) -> Result<()> {
     add_shard_column(conn, "fsrs_state", "fsrs_state TEXT NOT NULL DEFAULT 'new'")?;
     add_shard_column(conn, "lapses", "lapses INTEGER NOT NULL DEFAULT 0")?;
     add_shard_column(conn, "media", "media TEXT NOT NULL DEFAULT '[]'")?;
+
+    // Per-card study hint (the "why did I miss this last time" note).
+    add_shard_column(conn, "hint", "hint TEXT NOT NULL DEFAULT ''")?;
 
     // review_log timing columns (added after the table first shipped).
     add_column(conn, "review_log", "duration_ms", "duration_ms INTEGER NOT NULL DEFAULT 0")?;
@@ -382,6 +386,7 @@ fn row_to_shard(row: &rusqlite::Row) -> Result<Shard> {
         prompt: row.get("prompt")?,
         code: row.get("code")?,
         description: row.get("description")?,
+        hint: row.get("hint")?,
         deck_id: row.get("deck_id")?,
         deck_ids: Vec::new(), // populated separately from card_decks
         card_type: row.get("card_type")?,
@@ -528,20 +533,20 @@ fn save_shard_row(conn: &Connection, s: &Shard) -> Result<()> {
         "INSERT INTO shards (id, title, language, prompt, code, description, deck_id, card_type, tags, category,
             familiarity, source, related_ids, created_at, modified_at, last_reviewed,
             review_enabled, review_interval, review_reps, review_ease, review_next,
-            fsrs_stability, fsrs_difficulty, fsrs_state, lapses, media)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26)
+            fsrs_stability, fsrs_difficulty, fsrs_state, lapses, media, hint)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27)
          ON CONFLICT(id) DO UPDATE SET
             title=?2, language=?3, prompt=?4, code=?5, description=?6, deck_id=?7, card_type=?8, tags=?9, category=?10,
             familiarity=?11, source=?12, related_ids=?13, created_at=?14, modified_at=?15,
             last_reviewed=?16, review_enabled=?17, review_interval=?18, review_reps=?19,
             review_ease=?20, review_next=?21,
-            fsrs_stability=?22, fsrs_difficulty=?23, fsrs_state=?24, lapses=?25, media=?26",
+            fsrs_stability=?22, fsrs_difficulty=?23, fsrs_state=?24, lapses=?25, media=?26, hint=?27",
         params![
             s.id, s.title, s.language, s.prompt, s.code, s.description, s.deck_id, s.card_type, tags, s.category,
             s.familiarity, s.source, related, s.created_at, s.modified_at, s.last_reviewed,
             s.review_enabled as i64, s.review_interval, s.review_repetitions, s.review_ease,
             s.review_next,
-            s.fsrs_stability, s.fsrs_difficulty, s.fsrs_state, s.lapses, media,
+            s.fsrs_stability, s.fsrs_difficulty, s.fsrs_state, s.lapses, media, s.hint,
         ],
     )?;
 
@@ -565,6 +570,19 @@ fn save_shard_row(conn: &Connection, s: &Shard) -> Result<()> {
         }
     }
     sync_legacy_deck(conn, &s.id)
+}
+
+/// Update only a card's hint.
+///
+/// Deliberately narrow rather than a whole-shard save: the study view writes the
+/// hint while a review for the same card may be in flight, and saving the frontend's
+/// copy of the shard would overwrite the schedule `submit_review` had just written.
+pub fn set_shard_hint(conn: &Connection, id: &str, hint: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE shards SET hint = ?2, modified_at = ?3 WHERE id = ?1",
+        params![id, hint, now_iso()],
+    )?;
+    Ok(())
 }
 
 pub fn delete_shard(conn: &Connection, id: &str) -> Result<()> {

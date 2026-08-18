@@ -164,6 +164,12 @@ fn sync_debt_deck(state: State<AppState>) -> Result<(), String> {
     with_conn(&state, |c| db::sync_debt_deck(c))
 }
 
+/// Save just the study hint. Narrow on purpose — see `db::set_shard_hint`.
+#[tauri::command]
+fn set_shard_hint(state: State<AppState>, id: String, hint: String) -> Result<(), String> {
+    with_conn(&state, |c| db::set_shard_hint(c, &id, &hint))
+}
+
 #[tauri::command]
 fn delete_shard(state: State<AppState>, id: String) -> Result<(), String> {
     with_conn(&state, |c| db::delete_shard(c, &id))
@@ -352,12 +358,14 @@ fn apply_review(
             elapsed,
             &cfg,
         );
+        let r = fsrs::adjust_for_rating(rating, r);
         shard.fsrs_stability = r.stability;
         shard.fsrs_difficulty = r.difficulty;
         shard.fsrs_state = r.state;
         shard.review_interval = r.interval;
         shard.review_next = r.next;
         shard.review_repetitions += 1;
+        // "Bombed it" maps to grade 1, so this counts both failure buttons.
         if grade == 1 {
             shard.lapses += 1;
         }
@@ -371,6 +379,7 @@ fn apply_review(
             shard.review_ease,
             &cfg,
         );
+        let r = sm2::adjust_for_rating(rating, r);
         shard.review_interval = r.interval;
         shard.review_repetitions = r.repetitions;
         shard.review_ease = r.ease;
@@ -578,6 +587,7 @@ pub fn run() {
             save_playbook_nodes,
             playbook_card_ids,
             sync_debt_deck,
+            set_shard_hint,
             submit_review,
             review_history,
             study_days,

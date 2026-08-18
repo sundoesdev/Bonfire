@@ -78,6 +78,7 @@ export const DEFAULT_CONFIG = {
   includeTags: [], // card must have all of these
   excludeTags: [], // card must have none of these
   cram: false, // ignore due dates, draw from whole matching set
+  hints: false, // show the per-card Hints pane while studying
   shuffle: true, // randomize the queue each session (so quitting midway varies the set)
   excludePlaybook: false, // skip cards that belong to a playbook (studied via the playbook)
   showPreview: true, // quick-start lands on the editable preview first
@@ -305,6 +306,10 @@ export function buildStudyConfigForm(ctx, cfg, opts = {}) {
           <div class="muted" style="margin-top:6px">Practice the whole set, ignoring due dates. Cram never changes a card's schedule, but still counts toward your heatmap and streak.</div>
         </div>
         <div style="margin-bottom:8px">
+          <button type="button" class="btn btn-toggle ${cfg.hints ? "on" : ""}" id="c-hints">Hints</button>
+          <div class="muted" style="margin-top:6px">Add a small notes pane beside each card while you study. Write down why you missed a card and it's waiting for you the next time that card comes up.</div>
+        </div>
+        <div style="margin-bottom:8px">
           <button type="button" class="btn btn-toggle ${cfg.shuffle ? "on" : ""}" id="c-shuffle">Shuffle order</button>
           <div class="muted" style="margin-top:6px">Randomize the queue each session, so if you stop midway you get a fresh mix next time instead of the same opening cards.</div>
         </div>
@@ -400,6 +405,7 @@ export function buildStudyConfigForm(ctx, cfg, opts = {}) {
     timeLimitMinutes: parseInt(timeInput.value, 10) || 0,
     maxCards: parseInt(maxInput.value, 10) || 0,
     cram: node.querySelector("#c-cram").classList.contains("on"),
+    hints: node.querySelector("#c-hints").classList.contains("on"),
     shuffle: node.querySelector("#c-shuffle").classList.contains("on"),
     excludePlaybook: node.querySelector("#c-exclude-pb").classList.contains("on"),
     showPreview: showPreviewToggle ? node.querySelector("#c-preview").classList.contains("on") : cfg.showPreview,
@@ -746,8 +752,11 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
     sessionId: `sess-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     cardShownMs: Date.now(),
     stats: { reviewed: 0, forgot: 0, advanced: 0 },
-    // Removes the active 1/2/3/4 grade-key listener (set by showReveal); null when none.
+    // Removes the active grade-key listener (set by showReveal); null when none.
     cleanupKeys: null,
+    // Persists an edited hint before the current card goes away; null when the
+    // Hints pane is off or already flushed (set by card()).
+    flushHint: null,
   };
 
   function fmt(ms) {
@@ -776,8 +785,12 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
 
   // End the session for good: clear the nav lock and show the summary screen.
   function finish() {
-    // The nav-lock path reaches finish() without going through render(), so tear
-    // down any active grade-key listener here too (item 4).
+    // The nav-lock path reaches finish() without going through render(), so save a
+    // pending hint and tear down any active grade-key listener here too (item 4).
+    if (session.flushHint) {
+      session.flushHint();
+      session.flushHint = null;
+    }
     if (session.cleanupKeys) {
       session.cleanupKeys();
       session.cleanupKeys = null;
@@ -852,8 +865,13 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
   }
 
   function render() {
-    // Tear down the previous card's grade-key listener (item 4) before drawing the
-    // next card, so 1/2/3/4 never leak onto a card that hasn't been revealed yet.
+    // Save any hint edit and tear down the previous card's grade-key listener
+    // (item 4) before drawing the next card, so the keys never leak onto a card
+    // that hasn't been revealed yet.
+    if (session.flushHint) {
+      session.flushHint();
+      session.flushHint = null;
+    }
     if (session.cleanupKeys) {
       session.cleanupKeys();
       session.cleanupKeys = null;
@@ -892,6 +910,8 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       used = true;
       const wasNew = isNewCard(s);
       const durationMs = Math.max(0, Date.now() - (session.cardShownMs || Date.now()));
+      // Before the review write, never after — see the note where flushHint is set.
+      if (session.flushHint) session.flushHint();
 
       // Persist in the background. The UI advance below must NOT be gated on this:
       // a slow / hung / failed submitReview must never freeze the rating buttons.
@@ -915,7 +935,7 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       })();
 
       session.stats.reviewed++;
-      if (rating === "forgot") session.stats.forgot++;
+      if (rating === "forgot" || rating === "bombed") session.stats.forgot++;
       else session.stats.advanced++;
       session.index++;
       render();
@@ -937,14 +957,7 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       ? `<div class="title-big">Recall the title / term</div>`
       : `<div class="title-big">${esc(s.title) || "(untitled)"}</div>`;
 
-    const root = el(`
-      <div>
-        <div class="row progress-row">
-          <span class="muted">${session.index + 1} of ${session.queue.length}</span>
-          <div class="spacer"></div>
-          <span id="timer" class="timer">${session.limitMs ? fmt(session.limitMs) : ""}</span>
-        </div>
-        <div id="time-banner" class="time-banner" style="display:none">⏰ Time's up — wrap up when you're ready.</div>
+    const reviewCardHtml = `
         <div class="review-card">
           <div class="row">${langBadge(s.language)} ${metaBadges(s.tags)} ${cardTypeBadge(type)}</div>
           ${headerHtml}
@@ -953,8 +966,30 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
           <hr class="sep" />
           <div id="answer-area"></div>
           <div id="controls"></div>
+        </div>`;
+    // Hints (opt-in, Settings → Study): a notes pane beside the card, readable from
+    // the question phase — the whole point is to see it *before* you answer. Only
+    // wrapped when it's on, so the default layout is untouched.
+    const bodyHtml = cfg.hints
+      ? `<div class="study-row">${reviewCardHtml}
+        <aside class="hint-pane">
+          <div class="section-title">Hints</div>
+          <textarea id="card-hint" class="hint-input" placeholder="e.g. you need &amp; to take the address">${esc(s.hint || "")}</textarea>
+          <div class="hint-help">Why you missed this last time — not the answer itself.</div>
+        </aside>
+      </div>`
+      : reviewCardHtml;
+
+    const root = el(`
+      <div>
+        <div class="row progress-row">
+          <span class="muted">${session.index + 1} of ${session.queue.length}</span>
+          <div class="spacer"></div>
+          <span id="timer" class="timer">${session.limitMs ? fmt(session.limitMs) : ""}</span>
         </div>
-        <div class="row" style="max-width:760px;margin:0 auto;gap:8px">
+        <div id="time-banner" class="time-banner" style="display:none">⏰ Time's up — wrap up when you're ready.</div>
+        ${bodyHtml}
+        <div class="row study-controls">
           <button class="btn btn-tool" id="skip">Skip</button>
           <button class="btn btn-tool" id="end">End session</button>
           <div class="spacer"></div>
@@ -971,6 +1006,24 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
 
     const answerArea = root.querySelector("#answer-area");
     const controls = root.querySelector("#controls");
+
+    // Persist an edited hint when the card goes away (graded, skipped, or the
+    // session ends). Writes only the hint column via setShardHint — a whole-shard
+    // save from here would push this stale copy over the schedule submitReview
+    // just wrote. Nulled by render()/finish() after firing.
+    const hintInput = root.querySelector("#card-hint");
+    if (hintInput) {
+      let savedHint = s.hint || "";
+      session.flushHint = () => {
+        if (hintInput.value === savedHint) return;
+        savedHint = hintInput.value;
+        s.hint = savedHint; // keep the in-memory card in step for this session
+        ctx.api.setShardHint(s.id, savedHint).catch(() => {
+          /* a lost hint must never interrupt studying */
+        });
+      };
+      hintInput.addEventListener("blur", () => session.flushHint && session.flushHint());
+    }
 
     // Question content shown before answering: cloze blanks, or (reverse) the answer side.
     const questionExtra = root.querySelector("#question-extra");
@@ -1034,15 +1087,17 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       }
 
       controls.innerHTML = `
-        <div class="muted" style="margin-top:12px">How well did you recall it? <span class="muted-2">(keys 1–4)</span></div>
+        <div class="muted" style="margin-top:12px">How well did you recall it? <span class="muted-2">(keys 1–6)</span></div>
         <div class="rating">
-          <button class="forgot" data-r="forgot"><span class="rating-key">1</span> Forgot</button>
-          <button class="hard" data-r="hard"><span class="rating-key">2</span> Hard</button>
-          <button class="good" data-r="good"><span class="rating-key">3</span> Good</button>
-          <button class="easy" data-r="easy"><span class="rating-key">4</span> Easy</button>
+          <button class="bombed" data-r="bombed" title="Back today — you didn't have it at all"><span class="rating-key">1</span> Bombed It</button>
+          <button class="forgot" data-r="forgot"><span class="rating-key">2</span> Forgot</button>
+          <button class="hard" data-r="hard"><span class="rating-key">3</span> Hard</button>
+          <button class="good" data-r="good"><span class="rating-key">4</span> Good</button>
+          <button class="easy" data-r="easy"><span class="rating-key">5</span> Easy</button>
+          <button class="supereasy" data-r="supereasy" title="Twice as far out as Easy — this one is welded in"><span class="rating-key">6</span> Super Easy</button>
         </div>
       `;
-      // Grade via click OR keys 1/2/3/4 (left→right). The keys are wired ONLY here,
+      // Grade via click OR keys 1–6 (left→right). The keys are wired ONLY here,
       // after the answer is revealed — so typing 1234 into the answer never grades.
       // A single `graded` flag shared by both paths prevents a click+key double-fire.
       let graded = false;
@@ -1058,7 +1113,7 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       controls.querySelectorAll(".rating button").forEach((b) =>
         b.addEventListener("click", () => grade(b.dataset.r))
       );
-      const KEY_RATINGS = { 1: "forgot", 2: "hard", 3: "good", 4: "easy" };
+      const KEY_RATINGS = { 1: "bombed", 2: "forgot", 3: "hard", 4: "good", 5: "easy", 6: "supereasy" };
       function onGradeKey(e) {
         // A single-card review has no nav lock, so the user can leave mid-reveal and
         // strand this listener — grading a card that is no longer on screen. If the

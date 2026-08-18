@@ -123,14 +123,43 @@ pub fn fsrs(
     }
 }
 
-/// Maps the four review buttons to FSRS grades (1=Again .. 4=Easy).
+/// Maps the review buttons to FSRS grades (1=Again .. 4=Easy).
+///
+/// FSRS only defines four grades — it has exactly four initial-stability weights
+/// and clamps anything else — so the two outer buttons share their neighbour's
+/// grade here and are separated afterwards by [`adjust_for_rating`]. Widening the
+/// scale instead would mean inventing weights the model was never fitted with.
 pub fn grade_from_rating(rating: &str) -> i64 {
     match rating {
-        "forgot" => 1,
+        "bombed" | "forgot" => 1,
         "hard" => 2,
         "good" => 3,
-        "easy" => 4,
+        "easy" | "supereasy" => 4,
         _ => 3,
+    }
+}
+
+/// How much further than "easy" the "super easy" button pushes a card out.
+const SUPER_EASY_MULTIPLIER: f64 = 2.0;
+
+/// Apply the two buttons that sit outside FSRS's own scale.
+///
+/// "Bombed it" pins the card to today so it returns within hours; "super easy"
+/// doubles the computed interval. Stability and difficulty are left exactly as FSRS
+/// computed them — only the interval this one review earns is overridden, so the
+/// model's memory of the card stays its own.
+pub fn adjust_for_rating(rating: &str, r: FsrsResult) -> FsrsResult {
+    let interval = match rating {
+        "bombed" => 0,
+        "supereasy" => ((r.interval as f64 * SUPER_EASY_MULTIPLIER).round() as i64).max(1),
+        _ => return r,
+    };
+    FsrsResult {
+        interval,
+        next: (Local::now().date_naive() + Duration::days(interval))
+            .format("%Y-%m-%d")
+            .to_string(),
+        ..r
     }
 }
 
@@ -178,9 +207,51 @@ mod tests {
 
     #[test]
     fn ratings_map_to_the_documented_grades() {
+        assert_eq!(grade_from_rating("bombed"), 1);
         assert_eq!(grade_from_rating("forgot"), 1);
         assert_eq!(grade_from_rating("hard"), 2);
         assert_eq!(grade_from_rating("good"), 3);
         assert_eq!(grade_from_rating("easy"), 4);
+        assert_eq!(grade_from_rating("supereasy"), 4);
+        assert_eq!(grade_from_rating("nonsense"), 3, "unknown falls back to good");
+    }
+
+    #[test]
+    fn bombed_brings_the_card_back_today() {
+        let cfg = FsrsConfig::default();
+        let r = adjust_for_rating(
+            "bombed",
+            fsrs(grade_from_rating("bombed"), 40.0, 5.0, "review", 40, &cfg),
+        );
+        assert_eq!(r.interval, 0);
+        assert_eq!(r.next, Local::now().date_naive().format("%Y-%m-%d").to_string());
+    }
+
+    #[test]
+    fn super_easy_pushes_out_twice_as_far_as_easy() {
+        let cfg = FsrsConfig::default();
+        let easy = adjust_for_rating(
+            "easy",
+            fsrs(grade_from_rating("easy"), 10.0, 5.0, "review", 10, &cfg),
+        );
+        let sup = adjust_for_rating(
+            "supereasy",
+            fsrs(grade_from_rating("supereasy"), 10.0, 5.0, "review", 10, &cfg),
+        );
+        assert_eq!(sup.interval, easy.interval * 2);
+        // The model's memory of the card is untouched — only this interval moved.
+        assert_eq!(sup.stability, easy.stability);
+        assert_eq!(sup.difficulty, easy.difficulty);
+    }
+
+    #[test]
+    fn the_ordinary_ratings_pass_through_untouched() {
+        let cfg = FsrsConfig::default();
+        for rating in ["forgot", "hard", "good", "easy"] {
+            let base = fsrs(grade_from_rating(rating), 10.0, 5.0, "review", 10, &cfg);
+            let (i, next) = (base.interval, base.next.clone());
+            let out = adjust_for_rating(rating, base);
+            assert_eq!((out.interval, out.next), (i, next), "{rating}");
+        }
     }
 }

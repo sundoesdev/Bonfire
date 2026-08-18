@@ -49,6 +49,10 @@ pub struct Shard {
     pub prompt: String,
     pub code: String,
     pub description: String,
+    /// Free-text reminder the user writes about *why* they missed this card.
+    /// Shown before the answer during study (opt-in), unlike `description`,
+    /// which is the post-reveal Notes block.
+    pub hint: String,
     /// Legacy single-deck field, kept as a mirror of the first membership for
     /// back-compat with older JSON exports. The source of truth is `deck_ids`.
     pub deck_id: String,
@@ -94,6 +98,7 @@ impl Default for Shard {
             prompt: String::new(),
             code: String::new(),
             description: String::new(),
+            hint: String::new(),
             deck_id: String::new(),
             deck_ids: Vec::new(),
             card_type: "basic".to_string(),

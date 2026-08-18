@@ -34,10 +34,12 @@
   --danger: #B23A2E;             /* warm-shifted destructive */
   --danger-soft: #F4DCD7;
   /* Warm grade spectrum for the reveal-and-grade cards (text + tinted hotkey chip). */
+  --grade-bombed: #7A1F12;  --grade-bombed-chip: #EFCFC8;
   --grade-forgot: #9A3324;  --grade-forgot-chip: #F4DCD7;
   --grade-hard: #8A5A1E;    --grade-hard-chip: #F0E2C8;
   --grade-good: #4F6E3F;    --grade-good-chip: #E3EBD8;
   --grade-easy: #2F6E5E;    --grade-easy-chip: #DCEBE4;
+  --grade-supereasy: #2B5F76; --grade-supereasy-chip: #D8E6EC;
   --code-bg: #F6EFE2;            /* code surface */
   --code-text: #4A4136;          /* base code text */
   --shadow-sm: 0 1px 2px rgba(120,90,50,0.06);
@@ -683,12 +685,56 @@ textarea { resize: vertical; }
   box-shadow: var(--shadow-lg);
 }
 .review-card .sep { border: none; border-top: 1px solid var(--glass-border); margin: 14px 0; }
+/* Hints layout (opt-in): card and notes pane side by side, the pair centred as one
+   unit so the card doesn't shift when the pane is toggled off. */
+.study-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  max-width: 1056px;
+  margin: 16px auto;
+}
+.study-row .review-card { flex: 1 1 760px; margin: 0; min-width: 0; }
+.hint-pane {
+  flex: 0 0 264px;
+  padding: 18px;
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-md);
+}
+.hint-input {
+  width: 100%;
+  min-height: 180px;
+  margin-top: 6px;
+  padding: 10px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.hint-help { margin-top: 8px; font-size: 11.5px; line-height: 1.45; color: var(--text-3); }
+/* Skip / End session / Queue: line up with whatever is above them, which is wider
+   when the Hints pane is showing. */
+.study-controls { max-width: 760px; margin: 0 auto; gap: 8px; }
+.study-row ~ .study-controls { max-width: 1056px; }
+@media (max-width: 1060px) {
+  .study-row, .study-row ~ .study-controls { max-width: 760px; }
+  .study-row { flex-direction: column; }
+  .hint-pane { flex: 1 1 auto; width: 100%; }
+  .hint-input { min-height: 90px; }
+}
 .hidden-code-msg { color: var(--muted); font-style: italic; text-align: center; padding: 24px 0; }
 .progress { color: var(--muted); text-align: right; max-width: 760px; margin: 0 auto; }
 /* Reveal-and-grade beat: bordered surface cards (chip stacked above a colored
    label), not filled bars. The warm per-grade spectrum lives in tokens (calm —
    "Forgot" is a warm brick, never a shame state) with Dark variants below. */
-.rating { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 14px; }
+.rating { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-top: 14px; }
+@media (max-width: 720px) { .rating { grid-template-columns: repeat(3, 1fr); } }
 .rating button {
   display: flex; flex-direction: column; align-items: center; gap: 4px;
   padding: 10px 6px; height: auto;
@@ -697,16 +743,20 @@ textarea { resize: vertical; }
   cursor: pointer; transition: box-shadow var(--transition), transform var(--t-fast) var(--ease), border-color var(--transition);
 }
 .rating button:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.rating .bombed { color: var(--grade-bombed); }
 .rating .forgot { color: var(--grade-forgot); }
 .rating .hard { color: var(--grade-hard); }
 .rating .good { color: var(--grade-good); }
 .rating .easy { color: var(--grade-easy); }
-/* The 1/2/3/4 hotkey hint chip on each rating button (item 4). */
+.rating .supereasy { color: var(--grade-supereasy); }
+/* The 1–6 hotkey hint chip on each rating button (item 4). */
 .rating-key { display: inline-block; min-width: 16px; padding: 1px 6px; border-radius: 5px; font-size: 10px; font-weight: 600; font-family: var(--font-mono); }
+.rating .bombed .rating-key { background: var(--grade-bombed-chip); color: var(--grade-bombed); }
 .rating .forgot .rating-key { background: var(--grade-forgot-chip); color: var(--grade-forgot); }
 .rating .hard .rating-key { background: var(--grade-hard-chip); color: var(--grade-hard); }
 .rating .good .rating-key { background: var(--grade-good-chip); color: var(--grade-good); }
 .rating .easy .rating-key { background: var(--grade-easy-chip); color: var(--grade-easy); }
+.rating .supereasy .rating-key { background: var(--grade-supereasy-chip); color: var(--grade-supereasy); }
 /* Keyboard hint chip on the Submit button. */
 .kbd { font-size: 10.5px; background: rgba(255,255,255,0.22); border-radius: 5px; padding: 2px 6px; font-family: var(--font-mono); margin-left: 4px; }
 .full-width { width: 100%; }
@@ -1178,10 +1228,12 @@ body.theme-dark {
   --danger: #E0664F;
   --danger-soft: #3A2420;
   /* Grade spectrum, lightened for the coal surface (text) + dark-tinted chips. */
+  --grade-bombed: #EE6B52;  --grade-bombed-chip: #3F211C;
   --grade-forgot: #E0826F;  --grade-forgot-chip: #3A2622;
   --grade-hard: #D6A45A;    --grade-hard-chip: #352B1C;
   --grade-good: #8FB87A;    --grade-good-chip: #25301F;
   --grade-easy: #6FB8A6;    --grade-easy-chip: #1F302B;
+  --grade-supereasy: #6FA8C0; --grade-supereasy-chip: #1D2A32;
   --code-bg: #141211;
   --code-text: #C9BFB2;
   --shadow-sm: 0 1px 2px rgba(0,0,0,0.30);

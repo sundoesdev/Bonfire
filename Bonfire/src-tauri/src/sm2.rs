@@ -68,14 +68,44 @@ pub fn sm2(quality: i64, interval: i64, repetitions: i64, ease: f64, cfg: &Sm2Co
     }
 }
 
-/// Maps the four review buttons to SM-2 quality grades.
+/// Maps the review buttons to SM-2 quality grades.
+///
+/// SM-2's scale is 0..=5 and "forgot"/"easy" already sit on both ends, so the two
+/// outer buttons share their neighbour's quality here and are separated afterwards
+/// by [`adjust_for_rating`].
 pub fn quality_from_rating(rating: &str) -> i64 {
     match rating {
-        "forgot" => 0,
+        "bombed" | "forgot" => 0,
         "hard" => 3,
         "good" => 4,
-        "easy" => 5,
+        "easy" | "supereasy" => 5,
         _ => 4,
+    }
+}
+
+/// How much further than "easy" the "super easy" button pushes a card out.
+const SUPER_EASY_MULTIPLIER: f64 = 2.0;
+
+/// Apply the two buttons that sit outside SM-2's own scale.
+///
+/// "Bombed it" pins the card to today, so it comes back within hours rather than
+/// tomorrow at the earliest. "Super easy" doubles the interval SM-2 computed, for
+/// cards so well known that a month is soon enough. Every other rating passes
+/// through untouched.
+pub fn adjust_for_rating(rating: &str, r: Sm2Result) -> Sm2Result {
+    let interval = match rating {
+        "bombed" => 0,
+        "supereasy" => ((r.interval as f64 * SUPER_EASY_MULTIPLIER).round() as i64).max(1),
+        _ => return r,
+    };
+    Sm2Result {
+        interval,
+        // A bombed card is not a step forward — reset the ladder like any lapse.
+        repetitions: if rating == "bombed" { 0 } else { r.repetitions },
+        ease: r.ease,
+        next: (Local::now().date_naive() + Duration::days(interval))
+            .format("%Y-%m-%d")
+            .to_string(),
     }
 }
 
@@ -121,10 +151,44 @@ mod tests {
 
     #[test]
     fn ratings_map_to_the_documented_grades() {
+        assert_eq!(quality_from_rating("bombed"), 0);
         assert_eq!(quality_from_rating("forgot"), 0);
         assert_eq!(quality_from_rating("hard"), 3);
         assert_eq!(quality_from_rating("good"), 4);
         assert_eq!(quality_from_rating("easy"), 5);
+        assert_eq!(quality_from_rating("supereasy"), 5);
         assert_eq!(quality_from_rating("nonsense"), 4, "unknown falls back to good");
+    }
+
+    #[test]
+    fn bombed_brings_the_card_back_today() {
+        let cfg = Sm2Config::default();
+        let r = adjust_for_rating("bombed", sm2(quality_from_rating("bombed"), 30, 5, 2.5, &cfg));
+        assert_eq!(r.interval, 0);
+        assert_eq!(r.repetitions, 0);
+        assert_eq!(r.next, Local::now().date_naive().format("%Y-%m-%d").to_string());
+    }
+
+    #[test]
+    fn super_easy_pushes_out_twice_as_far_as_easy() {
+        let cfg = Sm2Config::default();
+        let easy = adjust_for_rating("easy", sm2(quality_from_rating("easy"), 10, 3, 2.5, &cfg));
+        let sup = adjust_for_rating(
+            "supereasy",
+            sm2(quality_from_rating("supereasy"), 10, 3, 2.5, &cfg),
+        );
+        assert_eq!(sup.interval, easy.interval * 2);
+        assert!(sup.next > easy.next);
+    }
+
+    #[test]
+    fn the_ordinary_ratings_pass_through_untouched() {
+        let cfg = Sm2Config::default();
+        for rating in ["forgot", "hard", "good", "easy"] {
+            let base = sm2(quality_from_rating(rating), 10, 3, 2.5, &cfg);
+            let (i, reps, next) = (base.interval, base.repetitions, base.next.clone());
+            let out = adjust_for_rating(rating, base);
+            assert_eq!((out.interval, out.repetitions, out.next), (i, reps, next), "{rating}");
+        }
     }
 }

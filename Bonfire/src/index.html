@@ -15,6 +15,9 @@
          in the study answer editor. Core → modes (xml/js/css before htmlmixed) →
          addons → vim keymap. -->
     <script src="/vendor/codemirror/lib/codemirror.min.js"></script>
+    <!-- defineSimpleMode: required by the dockerfile and toml modes below, which
+         threw on every page load without it. Must come before them. -->
+    <script src="/vendor/codemirror/addon/mode/simple.min.js"></script>
     <script src="/vendor/codemirror/mode/xml/xml.min.js"></script>
     <script src="/vendor/codemirror/mode/javascript/javascript.min.js"></script>
     <script src="/vendor/codemirror/mode/css/css.min.js"></script>
