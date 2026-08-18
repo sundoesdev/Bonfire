@@ -12,6 +12,8 @@
 #   ./install.sh --identity   only re-set who signs vault commits, then exit
 #   ./install.sh --update     rebuild and reinstall, unattended (used by the
 #                             in-app updater): no sudo, no prompts, no vault setup
+#   ./install.sh --dev        launcher runs `npm run tauri dev` from this checkout
+#                             every time, instead of a compiled binary (for testing)
 #
 set -euo pipefail
 
@@ -30,16 +32,26 @@ FRESH=0
 ASK_SYNC=1
 IDENTITY_ONLY=0
 UPDATE_ONLY=0
+DEV_LAUNCH=0
+LAUNCH_MODE_FILE="$DATA_DIR/launch-mode"
 for arg in "$@"; do
   case "$arg" in
     --fresh)    FRESH=1 ;;
     --no-sync)  ASK_SYNC=0 ;;
     --identity) IDENTITY_ONLY=1 ;;
     --update)   UPDATE_ONLY=1; ASK_SYNC=0 ;;
+    --dev)      DEV_LAUNCH=1 ;;
     -h|--help) awk 'NR>2 && /^#/ { sub(/^# ?/, ""); print; next } NR>2 { exit }' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "Unknown option: $arg (try --help)" >&2; exit 2 ;;
   esac
 done
+
+# An unattended --update must not quietly undo a --dev install: the in-app updater
+# calls it, and reinstalling the compiled binary over the dev launcher would put the
+# user back on stale code without them asking.
+if [ "$UPDATE_ONLY" -eq 1 ] && [ "$(cat "$LAUNCH_MODE_FILE" 2>/dev/null)" = "dev" ]; then
+  DEV_LAUNCH=1
+fi
 
 say()  { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
@@ -304,30 +316,38 @@ main() {
   info "Repository: $REPO_DIR"
   info "Distro family: $family"
 
-  # --update runs unattended from the app, so it must never reach for sudo or a
-  # prompt. A machine that already has Hearth installed already has the toolchain,
-  # so the dependency steps have nothing left to do anyway.
-  if [ "$UPDATE_ONLY" -eq 0 ]; then
+  # --update runs unattended from the app and --dev is a re-point of an existing
+  # install; neither may reach for sudo or a prompt. A machine that already has
+  # Hearth installed already has the toolchain, so this has nothing left to do anyway.
+  if [ "$UPDATE_ONLY" -eq 0 ] && [ "$DEV_LAUNCH" -eq 0 ]; then
     install_system_deps "$family"
   fi
   ensure_rust
   ensure_node
 
-  say "Building Hearth (this takes a few minutes the first time)"
-  cd "$APP_DIR"
-  npm install
-  # --no-bundle: we install the binary directly and write our own .desktop entry,
-  # so the .deb/.rpm/.AppImage bundles would be built and then thrown away. They
-  # are also the most fragile part of the build — AppImage packaging shells out
-  # to linuxdeploy, which is itself an AppImage and needs FUSE, and fails on
-  # machines without libfuse2, in containers, or with no /dev/fuse. Skipping it
-  # removes an entire class of install failure and is meaningfully faster.
-  # (To produce distributable installers, run `npm run tauri build` yourself.)
-  npm run tauri build -- --no-bundle
+  # In dev-launcher mode there is no release build to make: every launch builds
+  # from source. Only the npm dependencies have to be in place.
+  local built=""
+  if [ "$DEV_LAUNCH" -eq 1 ]; then
+    say "Setting up the dev launcher (no release build)"
+    cd "$APP_DIR"
+    npm install
+  else
+    say "Building Hearth (this takes a few minutes the first time)"
+    cd "$APP_DIR"
+    npm install
+    # --no-bundle: we install the binary directly and write our own .desktop entry,
+    # so the .deb/.rpm/.AppImage bundles would be built and then thrown away. They
+    # are also the most fragile part of the build — AppImage packaging shells out
+    # to linuxdeploy, which is itself an AppImage and needs FUSE, and fails on
+    # machines without libfuse2, in containers, or with no /dev/fuse. Skipping it
+    # removes an entire class of install failure and is meaningfully faster.
+    # (To produce distributable installers, run `npm run tauri build` yourself.)
+    npm run tauri build -- --no-bundle
 
-  local built
-  built="$APP_DIR/src-tauri/target/release/bonfire"
-  [ -x "$built" ] || die "Build finished but the binary is missing at $built"
+    built="$APP_DIR/src-tauri/target/release/bonfire"
+    [ -x "$built" ] || die "Build finished but the binary is missing at $built"
+  fi
 
   # Only --fresh ever touches existing study data. A plain re-install (the normal
   # way to update Hearth) leaves the vault exactly as it was.
@@ -341,15 +361,26 @@ main() {
   mkdir -p "$BIN_DIR" "$ICON_DIR" "$DESKTOP_DIR" "$DATA_DIR"
   : > "$MANIFEST"   # rewritten each install so it always reflects reality
 
-  install -m 755 "$built" "$BIN_DIR/hearth"
+  # Either way the launcher is $BIN_DIR/hearth, so the .desktop entry below never
+  # has to change — only what "hearth" *is* changes.
+  if [ "$DEV_LAUNCH" -eq 1 ]; then
+    install -m 755 "$REPO_DIR/dev-launch.sh" "$BIN_DIR/hearth"
+    info "Launcher → $BIN_DIR/hearth (runs 'npm run tauri dev' from $REPO_DIR)"
+  else
+    install -m 755 "$built" "$BIN_DIR/hearth"
+    info "Binary  → $BIN_DIR/hearth"
+  fi
   record "$BIN_DIR/hearth"
-  info "Binary  → $BIN_DIR/hearth"
 
   # Tell the installed binary where its own source lives, so the in-app updater can
   # fast-forward this checkout and rebuild. Rewritten every install, so moving the
   # checkout and re-running is all it takes to correct it.
   printf '%s\n' "$REPO_DIR" > "$DATA_DIR/source-repo.txt"
   record "$DATA_DIR/source-repo.txt"
+
+  # Remembered so a later --update keeps the launcher the user chose.
+  printf '%s\n' "$([ "$DEV_LAUNCH" -eq 1 ] && echo dev || echo binary)" > "$LAUNCH_MODE_FILE"
+  record "$LAUNCH_MODE_FILE"
 
   local icon="$APP_DIR/src-tauri/icons/128x128@2x.png"
   if [ -f "$icon" ]; then
