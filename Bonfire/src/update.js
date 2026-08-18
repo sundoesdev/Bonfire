@@ -1,58 +1,44 @@
-// Auto-updater scaffolding (roadmap — NOT active yet).
+// Auto-updater: fast-forward the source checkout from GitHub `main` and rebuild.
 //
-// Intended behavior once activated: on launch, check the production GitHub
-// release for a newer version; if we're behind, reveal a subtle "Update
-// available" badge at the top of the GUI. Clicking it downloads + installs the
-// update and restarts the app.
+// Hearth is installed by install.sh from a git checkout, so an update is
+// `git pull --ff-only && ./install.sh --update` in that checkout. All of the real
+// work — and the safety rails around executing pulled code — lives in the backend
+// (src-tauri/src/update.rs); this file only decides when to run it and how to say
+// what happened.
 //
-// This file is a SAFE NO-OP until the updater plugin is wired up. It only does
-// anything if `window.__TAURI__.updater` exists, so dev/build are unaffected and
-// nothing ever throws. To turn it on, see SETUP-GITHUB-RELEASES.txt
-// ("FUTURE: AUTO-UPDATER") / CLAUDE.md → Updater:
-//   1. cargo add tauri-plugin-updater tauri-plugin-process (register in lib.rs)
-//   2. tauri signer generate → pubkey in tauri.conf.json, private key as CI secret
-//   3. bundle.createUpdaterArtifacts = true + plugins.updater.endpoints
-//   4. capabilities: updater:default, process:allow-restart
+// It runs unattended on launch. The rebuild takes minutes, so it never blocks the
+// UI: the result arrives as a toast whenever it lands. A running binary can't
+// replace itself, so a successful update applies on the next launch.
 
-function updaterApi() {
-  return (window.__TAURI__ && window.__TAURI__.updater) || null;
-}
+import * as api from "./api.js";
 
-// Check production for a newer release and reveal the badge if one exists.
-// `badgeEl` is the #update-badge button. Silent on any failure (offline, plugin
-// not installed, etc.).
-export async function checkForUpdate(_ctx, badgeEl) {
-  const updater = updaterApi();
-  if (!updater || typeof updater.check !== "function") return; // plugin not installed yet
+// Check for an update and, if there is one, apply it. Reports through `ctx.toast`.
+// `badgeEl` is the #update-badge button, revealed once an update is waiting to be
+// picked up by a restart.
+export async function checkForUpdate(ctx, badgeEl) {
+  let result;
   try {
-    const update = await updater.check();
-    // v2 `check()` resolves to an Update (truthy/`.available`) or null.
-    if (update && (update.available === undefined || update.available) && badgeEl) {
-      badgeEl.hidden = false;
-      if (update.version) badgeEl.title = `Update to ${update.version}`;
-    }
+    result = await api.checkAndUpdate();
   } catch (_e) {
-    /* offline / not configured — stay silent */
+    return; // backend unavailable — never let this surface as a startup error
+  }
+  if (!result) return;
+  // "skipped" is the normal case for a dev build or a non-git install, and
+  // "up-to-date" is the normal case for everyone else. Neither is worth a toast.
+  if (result.status === "updated") {
+    ctx.toast(result.detail, "success");
+    if (badgeEl) {
+      badgeEl.hidden = false;
+      badgeEl.textContent = "● Restart to finish update";
+      badgeEl.title = result.detail;
+    }
+  } else if (result.status === "failed") {
+    ctx.toast(result.detail, "error");
   }
 }
 
-// Download + install the update, then restart. Called from the badge click.
-export async function applyUpdate() {
-  const updater = updaterApi();
-  const proc = window.__TAURI__ && window.__TAURI__.process;
-  if (!updater || typeof updater.check !== "function") {
-    alert("The auto-updater isn't configured yet. See SETUP-GITHUB-RELEASES.txt.");
-    return;
-  }
-  try {
-    const update = await updater.check();
-    if (!update || (update.available !== undefined && !update.available)) {
-      alert("You're already on the latest version.");
-      return;
-    }
-    await update.downloadAndInstall();
-    if (proc && typeof proc.relaunch === "function") await proc.relaunch();
-  } catch (e) {
-    alert("Update failed: " + (e && e.message ? e.message : e));
-  }
+// The badge is only shown after an update has already been installed, so clicking
+// it has nothing left to do but explain that a restart is what applies it.
+export function applyUpdate(ctx) {
+  ctx.toast("Quit and reopen Hearth to finish updating");
 }

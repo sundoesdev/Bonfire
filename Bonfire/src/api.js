@@ -46,6 +46,9 @@ export const syncStatus = () => invoke("sync_status");
 export const listSyncConflicts = () => invoke("list_sync_conflicts");
 export const resolveSyncConflict = (id, restore = false) =>
   invoke("resolve_sync_conflict", { id, restore });
+// Self-update from the source checkout. Resolves to { status, detail }; a rebuild
+// takes minutes, so callers must not await it on a path the user is waiting on.
+export const checkAndUpdate = () => invoke("check_and_update");
 
 const JSON_FILTER = [{ name: "JSON", extensions: ["json"] }];
 

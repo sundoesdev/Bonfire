@@ -265,10 +265,11 @@ window.addEventListener("DOMContentLoaded", async () => {
     ctx.newShard();
   });
 
-  // Auto-updater (scaffold): no-op until the updater plugin is configured.
+  // Auto-updater: pulls GitHub main and rebuilds in the background. Never awaited —
+  // a rebuild takes minutes and must not hold up the boot splash or the UI.
   const updateBadge = document.querySelector("#update-badge");
   if (updateBadge) {
-    updateBadge.addEventListener("click", () => applyUpdate());
+    updateBadge.addEventListener("click", () => applyUpdate(ctx));
     checkForUpdate(ctx, updateBadge);
   }
 

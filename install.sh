@@ -10,6 +10,8 @@
 #   ./install.sh --fresh      also wipe the local vault first (gated, see below)
 #   ./install.sh --no-sync    skip the vault prompt entirely
 #   ./install.sh --identity   only re-set who signs vault commits, then exit
+#   ./install.sh --update     rebuild and reinstall, unattended (used by the
+#                             in-app updater): no sudo, no prompts, no vault setup
 #
 set -euo pipefail
 
@@ -27,11 +29,13 @@ DESKTOP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 FRESH=0
 ASK_SYNC=1
 IDENTITY_ONLY=0
+UPDATE_ONLY=0
 for arg in "$@"; do
   case "$arg" in
     --fresh)    FRESH=1 ;;
     --no-sync)  ASK_SYNC=0 ;;
     --identity) IDENTITY_ONLY=1 ;;
+    --update)   UPDATE_ONLY=1; ASK_SYNC=0 ;;
     -h|--help) awk 'NR>2 && /^#/ { sub(/^# ?/, ""); print; next } NR>2 { exit }' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "Unknown option: $arg (try --help)" >&2; exit 2 ;;
   esac
@@ -300,7 +304,12 @@ main() {
   info "Repository: $REPO_DIR"
   info "Distro family: $family"
 
-  install_system_deps "$family"
+  # --update runs unattended from the app, so it must never reach for sudo or a
+  # prompt. A machine that already has Hearth installed already has the toolchain,
+  # so the dependency steps have nothing left to do anyway.
+  if [ "$UPDATE_ONLY" -eq 0 ]; then
+    install_system_deps "$family"
+  fi
   ensure_rust
   ensure_node
 
@@ -335,6 +344,12 @@ main() {
   install -m 755 "$built" "$BIN_DIR/hearth"
   record "$BIN_DIR/hearth"
   info "Binary  → $BIN_DIR/hearth"
+
+  # Tell the installed binary where its own source lives, so the in-app updater can
+  # fast-forward this checkout and rebuild. Rewritten every install, so moving the
+  # checkout and re-running is all it takes to correct it.
+  printf '%s\n' "$REPO_DIR" > "$DATA_DIR/source-repo.txt"
+  record "$DATA_DIR/source-repo.txt"
 
   local icon="$APP_DIR/src-tauri/icons/128x128@2x.png"
   if [ -f "$icon" ]; then

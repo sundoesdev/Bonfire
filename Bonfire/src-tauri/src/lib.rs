@@ -5,6 +5,7 @@ mod merge;
 mod models;
 mod sm2;
 mod sync;
+mod update;
 mod vault;
 
 use models::{DayCount, DayDetail, Deck, Playbook, PlaybookDetail, PlaybookNode, Shard, VaultExport};
@@ -493,6 +494,15 @@ fn sync_now(state: State<AppState>) -> Result<String, String> {
     sync::sync_now(&conn, &state.dir)
 }
 
+/// Fast-forward the source checkout from GitHub `main` and rebuild (see update.rs).
+///
+/// Deliberately does NOT take the connection lock: a rebuild takes minutes, and
+/// holding the mutex for that long would freeze every other command.
+#[tauri::command]
+fn check_and_update(state: State<AppState>) -> update::UpdateResult {
+    update::check_and_update(&state.dir)
+}
+
 #[tauri::command]
 fn sync_status(state: State<AppState>) -> Result<sync::SyncStatus, String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
@@ -585,6 +595,7 @@ pub fn run() {
             sync_status,
             list_sync_conflicts,
             resolve_sync_conflict,
+            check_and_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
