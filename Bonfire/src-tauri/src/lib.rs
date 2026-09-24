@@ -318,36 +318,12 @@ fn elapsed_days(last_reviewed: &str) -> i64 {
     }
 }
 
-/// Apply a scheduling update for a review, persist, log it, and return the
-/// updated shard. Branches on the global `sr_algorithm` setting (SM-2 vs FSRS).
-/// Used by both the review session and "Mark Reviewed".
-fn apply_review(
-    state: &State<AppState>,
-    id: &str,
-    rating: &str,
-    duration_ms: i64,
-    session_id: &str,
-    cram: bool,
-) -> Result<Shard, String> {
-    let mut shard = with_conn(state, |c| db::get_shard(c, id))?
-        .ok_or_else(|| format!("Shard not found: {}", id))?;
-
-    let algorithm = if read_setting(state, "sr_algorithm").as_deref() == Some("fsrs") {
-        "fsrs"
-    } else {
-        "sm2"
-    };
-
-    // Cram mode is pure practice: it must NOT touch the scheduler. Skip all
-    // SM-2/FSRS math and the per-card scheduling/last_reviewed updates, but still
-    // log the review so the heatmap / streak / retention counters reflect it.
-    if cram {
-        with_conn(state, |c| {
-            db::log_review(c, id, &shard.deck_id, rating, "cram", duration_ms, session_id)
-        })?;
-        return Ok(shard);
-    }
-
+/// Run the active scheduler for `rating` and write the result onto `shard`.
+///
+/// Nothing is persisted here — the caller decides. Both the real review and the
+/// grade preview go through this one function, which is the point: a preview that
+/// computed its own dates would drift from what pressing the button actually does.
+fn schedule_onto(state: &State<AppState>, shard: &mut Shard, rating: &str, algorithm: &str) {
     if algorithm == "fsrs" {
         let cfg = fsrs_config_from(read_setting(state, "fsrs_params"));
         let grade = fsrs::grade_from_rating(rating);
@@ -384,6 +360,75 @@ fn apply_review(
         shard.review_ease = r.ease;
         shard.review_next = r.next;
     }
+}
+
+/// The ratings offered at review time, weakest first.
+pub const RATINGS: [&str; 4] = ["forgot", "hard", "good", "easy"];
+
+/// Where each grade would send this card, for the labels under the grade buttons.
+#[derive(serde::Serialize)]
+pub struct GradePreview {
+    rating: String,
+    interval: i64,
+    /// "YYYY-MM-DD" — the day the card next becomes due.
+    next: String,
+}
+
+/// Dry-run every grade against a card. Persists nothing.
+#[tauri::command]
+fn preview_review(state: State<AppState>, id: String) -> Result<Vec<GradePreview>, String> {
+    let shard = with_conn(&state, |c| db::get_shard(c, &id))?
+        .ok_or_else(|| format!("Shard not found: {}", id))?;
+    let algorithm = if read_setting(&state, "sr_algorithm").as_deref() == Some("fsrs") {
+        "fsrs"
+    } else {
+        "sm2"
+    };
+    Ok(RATINGS
+        .iter()
+        .map(|rating| {
+            let mut probe = shard.clone();
+            schedule_onto(&state, &mut probe, rating, algorithm);
+            GradePreview {
+                rating: (*rating).to_string(),
+                interval: probe.review_interval,
+                next: probe.review_next,
+            }
+        })
+        .collect())
+}
+
+/// Apply a scheduling update for a review, persist, log it, and return the
+/// updated shard. Branches on the global `sr_algorithm` setting (SM-2 vs FSRS).
+/// Used by both the review session and "Mark Reviewed".
+fn apply_review(
+    state: &State<AppState>,
+    id: &str,
+    rating: &str,
+    duration_ms: i64,
+    session_id: &str,
+    cram: bool,
+) -> Result<Shard, String> {
+    let mut shard = with_conn(state, |c| db::get_shard(c, id))?
+        .ok_or_else(|| format!("Shard not found: {}", id))?;
+
+    let algorithm = if read_setting(state, "sr_algorithm").as_deref() == Some("fsrs") {
+        "fsrs"
+    } else {
+        "sm2"
+    };
+
+    // Cram mode is pure practice: it must NOT touch the scheduler. Skip all
+    // SM-2/FSRS math and the per-card scheduling/last_reviewed updates, but still
+    // log the review so the heatmap / streak / retention counters reflect it.
+    if cram {
+        with_conn(state, |c| {
+            db::log_review(c, id, &shard.deck_id, rating, "cram", duration_ms, session_id)
+        })?;
+        return Ok(shard);
+    }
+
+    schedule_onto(state, &mut shard, rating, algorithm);
 
     shard.last_reviewed = now_iso();
     shard.modified_at = now_iso();
@@ -588,6 +633,7 @@ pub fn run() {
             sync_debt_deck,
             set_shard_hint,
             submit_review,
+            preview_review,
             review_history,
             study_days,
             rename_tag,

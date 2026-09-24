@@ -1,6 +1,6 @@
 // Study: active-recall testing. A configurable, editable, due-first queue of cards;
 // each card shows a question, you type an answer, reveal + compare, then self-grade (SM-2).
-import { el, esc, langBadge, metaBadges, isDue, enableTab, todayStr } from "../dom.js";
+import { el, esc, langBadge, metaBadges, isDue, enableTab, todayStr, dueLabel } from "../dom.js";
 import { DIFFICULTIES, FAMILIARITY_ORDER, ALL_DECKS, getDifficulty, isFoundation, isRevealOnly, cmMode } from "../constants.js";
 import { highlightInto } from "../highlight.js";
 import { mdLite } from "../markdown.js";
@@ -1086,15 +1086,37 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
         highlightInto(answerArea.querySelector("#answer"), s.code, s.language);
       }
 
+      const RATING_KEYS = ["forgot", "hard", "good", "easy"];
       controls.innerHTML = `
         <div class="muted" style="margin-top:12px">How well did you recall it? <span class="muted-2">(keys 1–4)</span></div>
         <div class="rating">
-          <button class="forgot" data-r="forgot"><span class="rating-key">1</span> Forgot</button>
-          <button class="hard" data-r="hard"><span class="rating-key">2</span> Hard</button>
-          <button class="good" data-r="good"><span class="rating-key">3</span> Good</button>
-          <button class="easy" data-r="easy"><span class="rating-key">4</span> Easy</button>
+          ${RATING_KEYS.map(
+            (r, i) => `<button class="${r}" data-r="${r}">
+              <span class="rating-line"><span class="rating-key">${i + 1}</span> ${r[0].toUpperCase() + r.slice(1)}</span>
+              <span class="rating-when" data-when="${r}">${cram ? "practice only" : "&nbsp;"}</span>
+            </button>`
+          ).join("")}
         </div>
       `;
+
+      // Show where each grade actually lands. The backend dry-runs the same
+      // scheduler submitReview uses, so these labels cannot drift from the result.
+      // Cram deliberately skips scheduling, so there is nothing to promise there.
+      if (!cram) {
+        (async () => {
+          try {
+            const preview = await ctx.api.previewReview(s.id);
+            // The card may have moved on while this was in flight.
+            if (!document.body.contains(controls)) return;
+            for (const g of preview) {
+              const slot = controls.querySelector(`[data-when="${g.rating}"]`);
+              if (slot) slot.textContent = dueLabel(g.next);
+            }
+          } catch (_e) {
+            controls.querySelectorAll(".rating-when").forEach((n) => (n.textContent = ""));
+          }
+        })();
+      }
       // Grade via click OR keys 1–4 (left→right). The keys are wired ONLY here,
       // after the answer is revealed — so typing 1234 into the answer never grades.
       // A single `graded` flag shared by both paths prevents a click+key double-fire.

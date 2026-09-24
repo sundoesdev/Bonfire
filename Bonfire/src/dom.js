@@ -95,6 +95,22 @@ export function todayStr() {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
+// "YYYY-MM-DD" -> a two-line human label, e.g. "in 11 days\nSun 5 Oct".
+// Rendered into textContent with `white-space: pre-line`, so no escaping needed.
+// Dates are parsed as local midnight, matching how review_next is compared.
+export function dueLabel(dateStr) {
+  if (!dateStr) return "";
+  const [y, m, d] = dateStr.split("-").map(Number);
+  if (!y || !m || !d) return "";
+  const target = new Date(y, m - 1, d);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const days = Math.round((target - today) / 86400000);
+  const when = days <= 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`;
+  const pretty = target.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  return `${when}\n${pretty}`;
+}
+
 export function isDue(shard) {
   return (
     shard.reviewEnabled &&

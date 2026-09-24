@@ -750,8 +750,8 @@ textarea { resize: vertical; }
 /* Reveal-and-grade beat: bordered surface cards (chip stacked above a colored
    label), not filled bars. The warm per-grade spectrum lives in tokens (calm —
    "Forgot" is a warm brick, never a shame state) with Dark variants below. */
-.rating { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-top: 14px; }
-@media (max-width: 720px) { .rating { grid-template-columns: repeat(3, 1fr); } }
+.rating { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 14px; }
+@media (max-width: 720px) { .rating { grid-template-columns: repeat(2, 1fr); } }
 .rating button {
   display: flex; flex-direction: column; align-items: center; gap: 4px;
   padding: 10px 6px; height: auto;
@@ -770,6 +770,13 @@ textarea { resize: vertical; }
 .rating .hard .rating-key { background: var(--grade-hard-chip); color: var(--grade-hard); }
 .rating .good .rating-key { background: var(--grade-good-chip); color: var(--grade-good); }
 .rating .easy .rating-key { background: var(--grade-easy-chip); color: var(--grade-easy); }
+.rating-line { display: inline-flex; align-items: center; gap: 6px; }
+/* Where this grade actually lands. Quiet — it informs the choice, it isn't the
+   choice. Reserves its own height so the row doesn't jump when the preview lands. */
+.rating-when {
+  white-space: pre-line; text-align: center; line-height: 1.35;
+  font-size: 10.5px; color: var(--muted-2); min-height: 2.7em;
+}
 /* Keyboard hint chip on the Submit button. */
 .kbd { font-size: 10.5px; background: rgba(255,255,255,0.22); border-radius: 5px; padding: 2px 6px; font-family: var(--font-mono); margin-left: 4px; }
 .full-width { width: 100%; }

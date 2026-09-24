@@ -30,6 +30,9 @@ export const playbookCardIds = () => invoke("playbook_card_ids");
 export const setShardHint = (id, hint) => invoke("set_shard_hint", { id, hint });
 export const submitReview = (id, rating, durationMs, sessionId, cram = false) =>
   invoke("submit_review", { id, rating, durationMs, sessionId, cram });
+// Dry-runs every grade against a card so the buttons can show where each one lands.
+// Persists nothing; shares the scheduler with submitReview so the labels can't drift.
+export const previewReview = (id) => invoke("preview_review", { id });
 export const reviewHistory = () => invoke("review_history");
 export const studyDays = () => invoke("study_days");
 export const renameTag = (oldName, newName) => invoke("rename_tag", { old: oldName, new: newName });
