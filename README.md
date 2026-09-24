@@ -53,6 +53,12 @@ offers to set up sync — you can skip that and do it later.
 Hearth is fully usable with no sync configured. Everything lives in a local
 SQLite database at `~/.local/share/com.bonfire.app/vault.db`.
 
+**On Windows**, download the installer from the
+[Releases page](https://github.com/sundoesdev/Bonfire/releases) instead — no
+build tools needed. See [docs/INSTALL.md](docs/INSTALL.md) for that, for where
+your data lives on each platform, and for how to uninstall. macOS bundles are
+built but untested.
+
 ---
 
 ## Sync
@@ -150,6 +156,10 @@ it yourself if you want it gone.
 ./uninstall.sh --keep-data   # remove the app, keep your cards on this machine
 ./uninstall.sh --force       # delete data even if unsynced (not recoverable)
 ```
+
+On Windows, uninstall through **Settings → Apps**. That removes the program but
+deliberately leaves your cards in `%APPDATA%\com.bonfire.app\` — see
+[docs/INSTALL.md](docs/INSTALL.md).
 
 ---
 
