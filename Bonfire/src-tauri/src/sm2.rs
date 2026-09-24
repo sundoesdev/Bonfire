@@ -69,6 +69,9 @@ pub fn sm2(quality: i64, interval: i64, repetitions: i64, ease: f64, cfg: &Sm2Co
 }
 
 /// Maps the four review buttons to SM-2 quality grades.
+///
+/// Older review-log rows may carry ratings the buttons no longer offer; they fall
+/// through to "good" here, but nothing replays the log through the scheduler.
 pub fn quality_from_rating(rating: &str) -> i64 {
     match rating {
         "forgot" => 0,
@@ -126,5 +129,8 @@ mod tests {
         assert_eq!(quality_from_rating("good"), 4);
         assert_eq!(quality_from_rating("easy"), 5);
         assert_eq!(quality_from_rating("nonsense"), 4, "unknown falls back to good");
+        // Ratings retired in 0.4.0 still appear in old review_log rows.
+        assert_eq!(quality_from_rating("bombed"), 4);
+        assert_eq!(quality_from_rating("supereasy"), 4);
     }
 }

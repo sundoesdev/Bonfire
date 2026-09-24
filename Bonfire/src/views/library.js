@@ -161,6 +161,7 @@ export function renderLibrary(container, ctx, params = {}) {
           ${langDot(s.language)}
           <span class="title">${esc(s.title) || "(untitled)"}</span>
           ${isDue(s) ? '<span class="review-dot" title="Due for review today">●</span>' : ""}
+          ${s.reviewEnabled ? "" : '<span class="pill pill-muted" title="Archived — not scheduled for review">archived</span>'}
           ${metaBadges(s.tags)}
           <button class="btn btn-tool mini review-btn" title="Review this card (no answer shown first)">Review</button>
         </div>

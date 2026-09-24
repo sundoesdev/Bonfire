@@ -1,10 +1,7 @@
-// Stats: a GitHub-style year heatmap of study activity, streaks/totals, the
-// topics you're weakest in, per-deck mastery, and a projected-retention curve.
-// Everything is computed in the frontend from review_history + all shards.
-import { el, esc, progressRing } from "../dom.js";
-import { SPECIAL_TAGS } from "../constants.js";
-
-const FAM_RANK = { shaky: 0, fresh: 1, solid: 2, mastered: 3 };
+// Stats: a GitHub-style year heatmap of study activity, streaks/totals, what
+// you've actually studied most, time spent, card debt, and a projected-retention
+// curve. Computed in the frontend from study_days + card_stats + all shards.
+import { el, esc } from "../dom.js";
 
 function ymd(d) {
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -104,45 +101,24 @@ function sumSince(dayCount, days) {
   return total;
 }
 
-// Topic tags you're weakest in (skips the reserved keyword tags).
-function weakTags(shards) {
-  const map = new Map();
-  for (const s of shards) {
-    for (const tag of s.tags || []) {
-      if (SPECIAL_TAGS.has(tag)) continue;
-      const e = map.get(tag) || { count: 0, famSum: 0, easeSum: 0, lapses: 0 };
-      e.count++;
-      e.famSum += FAM_RANK[s.familiarity] ?? 1;
-      e.easeSum += s.reviewEase || 2.5;
-      e.lapses += s.lapses || 0;
-      map.set(tag, e);
-    }
-  }
-  return [...map.entries()]
-    .filter(([, e]) => e.count >= 2)
-    .map(([tag, e]) => ({
-      tag,
-      count: e.count,
-      avgFam: e.famSum / e.count,
-      avgEase: e.easeSum / e.count,
-      lapses: e.lapses,
-      weakness: 3 - e.famSum / e.count + (2.5 - e.easeSum / e.count) + e.lapses / e.count,
-    }))
-    .sort((a, b) => b.weakness - a.weakness)
-    .slice(0, 8);
+// Total study time as H:MM:SS. Hours run unbounded; minutes and seconds never
+// reach 60, since each rolls into the next unit.
+export function formatStudyTime(ms) {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
 }
 
-function deckMastery(decks, allShards) {
-  return decks
-    .map((d) => {
-      const cards = allShards.filter((s) => (s.deckIds || []).includes(d.id));
-      const mastery = cards.length
-        ? Math.round((cards.reduce((a, s) => a + (FAM_RANK[s.familiarity] ?? 1) / 3, 0) / cards.length) * 100)
-        : 0;
-      return { name: d.name, count: cards.length, mastery };
-    })
-    .filter((d) => d.count > 0)
-    .sort((a, b) => b.mastery - a.mastery);
+// Join per-card review totals to the cards themselves, most-studied first. Cards
+// whose review history outlived them (deleted cards) are dropped.
+export function studiedCards(stats, allShards) {
+  const byId = new Map(allShards.map((s) => [s.id, s]));
+  return stats
+    .map((st) => ({ stat: st, shard: byId.get(st.shardId) }))
+    .filter((r) => r.shard)
+    .sort((a, b) => b.stat.reviews - a.stat.reviews || b.stat.totalMs - a.stat.totalMs);
 }
 
 // Average projected recall probability over the next `horizon` days, using the
@@ -299,9 +275,16 @@ export async function renderStats(container, ctx) {
   const todayN = dayCount.get(ymd(midnight(new Date()))) || 0;
   const last7 = sumSince(dayCount, 7);
   const last30 = sumSince(dayCount, 30);
-  const weak = weakTags(all);
   const debt = cardDebt(all);
-  const decks = deckMastery(ctx.decks(), all);
+  let cardTotals = [];
+  try {
+    cardTotals = await ctx.api.cardStats();
+  } catch (_e) {
+    /* ignore — empty history */
+  }
+  const studied = studiedCards(cardTotals, all);
+  const studyMs = cardTotals.reduce((a, c) => a + c.totalMs, 0);
+  const favourites = studied.filter((r) => r.shard.favorite);
   const { pts, count: retCount } = retentionCurve(ctx.state.shards);
   const avgDays = avgDaysToReview(ctx.state.shards);
 
@@ -340,7 +323,7 @@ export async function renderStats(container, ctx) {
         <div class="stat-card"><div class="stat-num">${current}</div><div class="stat-label">Current streak</div></div>
         <div class="stat-card"><div class="stat-num">${longest}</div><div class="stat-label">Longest streak</div></div>
         <div class="stat-card"><div class="stat-num">${total}</div><div class="stat-label">Total reviews</div></div>
-        <div class="stat-card"><div class="stat-num">${avgDays == null ? "—" : avgDays}</div><div class="stat-label">Avg days to review</div></div>
+        <div class="stat-card"><div class="stat-num stat-time">${formatStudyTime(studyMs)}</div><div class="stat-label">Time studied</div></div>
       </div>
 
       <div class="panel">
@@ -386,35 +369,59 @@ export async function renderStats(container, ctx) {
       </div>
 
       <div class="panel">
-        <div class="section-title">Areas you're lacking <span class="muted">(weakest topics across all decks)</span></div>
-        <div id="weak-list"></div>
+        <div class="section-title">Most studied</div>
+        <div class="muted" style="margin-bottom:8px">Every card you've reviewed, hardest-worn first. ${
+          studied.length
+            ? `${studied.length} card${studied.length === 1 ? "" : "s"} reviewed, ${formatStudyTime(studyMs)} at the desk.`
+            : ""
+        }</div>
+        <div id="studied-list"></div>
       </div>
 
       <div class="panel">
-        <div class="section-title">Deck mastery</div>
-        <div id="deck-mastery" class="mastery-rings"></div>
+        <div class="section-title">Favourites</div>
+        <div class="muted" style="margin-bottom:8px">Star a card from its window to keep it here.</div>
+        <div id="fav-list"></div>
       </div>
     </div>
   `);
 
-  const weakList = root.querySelector("#weak-list");
-  if (!weak.length) {
-    weakList.innerHTML = '<div class="muted">Not enough tagged cards yet — add topic tags to see weak spots.</div>';
+  // ---- Most studied / Favourites ----
+  // One row builder for both lists: rank, title, counts, opens the card.
+  const studiedRow = ({ stat, shard }, rank) => {
+    const row = el(`
+      <div class="list-row studied-row">
+        <span class="studied-rank${rank <= 3 ? " top" : ""}">${rank}</span>
+        <span class="title">${esc(shard.title) || "(untitled)"}</span>
+        ${shard.favorite ? '<span class="fav-star" title="Favourite">★</span>' : ""}
+        <div class="spacer"></div>
+        <span class="cat">${stat.reviews} review${stat.reviews === 1 ? "" : "s"}</span>
+        <span class="muted">${formatStudyTime(stat.totalMs)}</span>
+      </div>
+    `);
+    row.addEventListener("click", () => ctx.openShard(shard.id));
+    return row;
+  };
+
+  const studiedList = root.querySelector("#studied-list");
+  if (!studied.length) {
+    studiedList.innerHTML = '<div class="muted">Nothing reviewed yet — your first session fills this in.</div>';
   } else {
-    weak.forEach((w) => {
-      const pct = Math.round((w.avgFam / 3) * 100);
-      const row = el(`
-        <div class="list-row">
-          <span class="lang"><span class="lang-dot" style="--dot:var(--sage)"></span>#${esc(w.tag)}</span>
-          <span class="cat">${w.count} card${w.count === 1 ? "" : "s"}</span>
-          <span class="mastery-track"><span class="mastery-fill" style="width:${pct}%"></span></span>
-          <span class="muted">${pct}% familiar${w.lapses ? ` · ${w.lapses} lapse${w.lapses === 1 ? "" : "s"}` : ""}</span>
-          <button class="btn mini weak-drill" data-tag="${esc(w.tag)}">Drill</button>
-        </div>
-      `);
-      row.querySelector(".weak-drill").addEventListener("click", () => ctx.weakStudy());
-      weakList.appendChild(row);
-    });
+    const SHOWN = 20;
+    studied.slice(0, SHOWN).forEach((r, i) => studiedList.appendChild(studiedRow(r, i + 1)));
+    if (studied.length > SHOWN) {
+      studiedList.appendChild(
+        el(`<div class="muted" style="padding:6px 8px">+${studied.length - SHOWN} more</div>`)
+      );
+    }
+  }
+
+  const favList = root.querySelector("#fav-list");
+  if (!favourites.length) {
+    favList.innerHTML =
+      '<div class="muted">No favourites yet — open a card and hit ★ to pin the ones you care about.</div>';
+  } else {
+    favourites.slice(0, 10).forEach((r, i) => favList.appendChild(studiedRow(r, i + 1)));
   }
 
   // ---- Card debt list ----
@@ -449,22 +456,6 @@ export async function renderStats(container, ctx) {
     if (debt.length > 50) {
       debtList.appendChild(el(`<div class="muted" style="padding:6px 8px">+${debt.length - 50} more</div>`));
     }
-  }
-
-  const masteryList = root.querySelector("#deck-mastery");
-  if (!decks.length) {
-    masteryList.innerHTML = '<div class="muted">No cards yet.</div>';
-  } else {
-    decks.forEach((d) => {
-      masteryList.appendChild(
-        el(`
-        <div class="mastery-ring-item">
-          ${progressRing(d.mastery, d.name, 84)}
-          <div class="muted">${d.count} card${d.count === 1 ? "" : "s"}</div>
-        </div>
-      `)
-      );
-    });
   }
 
   container.appendChild(root);

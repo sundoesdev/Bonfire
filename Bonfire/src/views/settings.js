@@ -5,12 +5,17 @@ import { FONTS, SCALES, appearance, setAppearance } from "../theme.js";
 import { buildStudyConfigForm, loadConfig, saveConfig } from "./study.js";
 import {
   PRESET_OPTIONS,
-  DEBT_DECK_ID,
+  DERIVED_DECK_IDS,
   isNativeDeck,
   SR_ALGORITHMS,
   DEFAULT_ALGORITHM,
   SM2_DEFAULTS,
   FSRS_DEFAULTS,
+  DEFAULT_TAB_SIZE,
+  TAB_SIZE_RANGE,
+  clampTabSize,
+  FSRS_WEIGHT_META,
+  FSRS_RETENTION,
   cardTypeOptions,
   getDifficulty,
   SPECIAL_TAGS,
@@ -32,6 +37,20 @@ async function loadJsonSetting(ctx, key, dflt) {
 
 const DELETE_PHRASE = "are you absolutely super dupe sure you want to delete every card?";
 
+// One tunable parameter: label, what it does, a bounded number input, and a reset
+// that puts back the published default. Used for every FSRS knob.
+function paramRow(id, label, help, value, dflt, min, max, step) {
+  return `
+    <div class="param-row" data-default="${dflt}">
+      <div class="param-head">
+        <label for="${id}">${esc(label)}</label>
+        <div class="param-help">${esc(help)}</div>
+      </div>
+      <input type="number" id="${id}" class="param-input" step="${step}" min="${min}" max="${max}" value="${esc(value)}" />
+      <button type="button" class="btn btn-tool param-reset" data-for="${id}" title="Reset to ${dflt}">Reset</button>
+    </div>`;
+}
+
 const presetOptionsHtml = (current) =>
   PRESET_OPTIONS.map(
     (p) => `<option value="${esc(p.id)}" ${p.id === current ? "selected" : ""}>${esc(p.label)}</option>`
@@ -50,6 +69,7 @@ export async function renderSettings(container, ctx) {
   const sm2p = await loadJsonSetting(ctx, "sm2_params", SM2_DEFAULTS);
   const fsrsp = await loadJsonSetting(ctx, "fsrs_params", FSRS_DEFAULTS);
   const vimOn = (await ctx.api.getSetting("editor_vim")) === "true";
+  const tabSize = parseInt(await ctx.api.getSetting("editor_tab_size"), 10) || DEFAULT_TAB_SIZE;
   const dailyDeck = (await ctx.api.getSetting("daily_deck")) || "";
   const hideNative = (await ctx.api.getSetting("hide_native_decks")) === "true";
   const savedTab = (await ctx.api.getSetting("settings_tab")) || "appearance";
@@ -101,13 +121,21 @@ export async function renderSettings(container, ctx) {
       <div class="panel">
         <div class="muted" style="margin-bottom:8px">Adds VIM keybindings to the syntax-highlighted code answer editor during study. You can also toggle it while answering a question.</div>
         <button type="button" class="btn btn-toggle ${vimOn ? "on" : ""}" id="set-vim">VIM mode in the answer editor</button>
+        <div class="muted" style="margin:12px 0 8px">How far one Tab indents in the answer editor. <b>Shift + Tab</b> outdents by the same amount, and VIM's <code>&lt;&lt;</code> / <code>&gt;&gt;</code> follow it too.</div>
+        <div class="form-grid">
+          <label>Tab width</label>
+          <div class="row">
+            <input type="number" id="set-tab-size" style="width:96px" min="${TAB_SIZE_RANGE.min}" max="${TAB_SIZE_RANGE.max}" step="1" value="${esc(tabSize)}" />
+            <span class="muted-2">spaces</span>
+          </div>
+        </div>
       </div>
       </section>
 
       <section class="settings-tab" data-tab="decks">
       <div class="section-title">Decks</div>
       <div class="panel">
-        <div class="muted" style="margin-bottom:8px">A deck's preset controls its fields — the <b>Code</b> preset shows the Language field and syntax highlighting; other presets hide them so you can study any subject. Cards in a deleted deck move to the default deck. Star one deck as your <b>daily default</b> — the Ctrl+D quick-start studies it. The built-in <b>Default</b> and <b>Debt</b> decks (greyed) are required by Hearth — they can't be renamed or deleted, but you can change their preset or make one your daily default.</div>
+        <div class="muted" style="margin-bottom:8px">A deck's preset controls its fields — the <b>Code</b> preset shows the Language field and syntax highlighting; other presets hide them so you can study any subject. Cards in a deleted deck move to the default deck. Star one deck as your <b>daily default</b> — the Ctrl+D quick-start studies it. The built-in <b>Default</b>, <b>Debt</b> and <b>Archived</b> decks (greyed) are required by Hearth — they can't be renamed or deleted. Debt and Archived fill themselves: Debt holds whatever is overdue, Archived holds cards you've switched out of the review rotation.</div>
         <div class="row" style="margin-bottom:10px;gap:10px;align-items:center">
           <button type="button" class="btn btn-toggle ${hideNative ? "on" : ""}" id="toggle-native">Hide built-in decks</button>
           <div class="spacer"></div>
@@ -136,9 +164,34 @@ export async function renderSettings(container, ctx) {
           <label>Interval modifier</label><input type="number" id="sm2-interval-mod" step="0.05" min="0.5" max="2" value="${esc(sm2p.intervalModifier)}" />
           <label>Hard multiplier</label><input type="number" id="sm2-hard-mult" step="0.05" min="1" max="2" value="${esc(sm2p.hardMultiplier)}" />
         </div>
-        <div id="fsrs-knobs" class="form-grid" style="margin-top:8px">
-          <label>Request retention</label><input type="number" id="fsrs-retention" step="0.01" min="0.7" max="0.97" value="${esc(fsrsp.requestRetention)}" />
-          <label>Weights (17, comma-separated)</label><textarea id="fsrs-weights" style="min-height:54px" spellcheck="false">${esc((fsrsp.weights || FSRS_DEFAULTS.weights).join(", "))}</textarea>
+        <div id="fsrs-knobs" style="margin-top:8px">
+          ${paramRow(
+            "fsrs-retention",
+            "Request retention",
+            `The recall probability you are scheduling for, and the single biggest lever here. Higher means shorter intervals and seeing every card more often: at ${FSRS_RETENTION.max} a well-known card still returns within days, at ${FSRS_RETENTION.min} it can go months. ${FSRS_RETENTION.default} is the FSRS default.`,
+            fsrsp.requestRetention,
+            FSRS_RETENTION.default,
+            FSRS_RETENTION.min,
+            FSRS_RETENTION.max,
+            FSRS_RETENTION.step
+          )}
+          <div class="section-title" style="margin-top:14px">Model weights</div>
+          <div class="muted" style="margin-bottom:8px">These are the fitted parameters of the FSRS memory model. The defaults are the published FSRS-4.5 values and are a sensible place to stay — each range below is the span the model was actually fitted within.</div>
+          ${FSRS_WEIGHT_META.map((m, i) =>
+            paramRow(
+              `fsrs-w${i}`,
+              `${i}. ${m.label}`,
+              m.help,
+              (fsrsp.weights || FSRS_DEFAULTS.weights)[i],
+              FSRS_DEFAULTS.weights[i],
+              m.min,
+              m.max,
+              "any"
+            )
+          ).join("")}
+          <div class="row" style="margin-top:10px">
+            <button class="btn btn-tool" id="reset-fsrs-weights">Reset all weights to defaults</button>
+          </div>
         </div>
         <div class="row" style="margin-top:10px">
           <button class="btn btn-primary" id="save-sr">Save spaced-repetition settings</button>
@@ -223,13 +276,13 @@ export async function renderSettings(container, ctx) {
 
   // Dedicated daily-deck picker: lists every deck (incl. the built-in Default),
   // independent of the "Hide built-in decks" toggle — so Default is always selectable
-  // as the Ctrl+D quick-start deck. The auto Debt deck is excluded.
+  // as the Ctrl+D quick-start deck. The auto Debt/Archived decks are excluded.
   const dailyDeckSelect = root.querySelector("#daily-deck-select");
   dailyDeckSelect.innerHTML =
     `<option value="">None</option>` +
     ctx
       .decks()
-      .filter((d) => d.id !== DEBT_DECK_ID)
+      .filter((d) => !DERIVED_DECK_IDS.has(d.id))
       .map((d) => `<option value="${esc(d.id)}" ${d.id === dailyDeck ? "selected" : ""}>${esc(d.name) || "(unnamed)"}</option>`)
       .join("");
   dailyDeckSelect.addEventListener("change", async () => {
@@ -269,6 +322,13 @@ export async function renderSettings(container, ctx) {
     ctx.api.setSetting("editor_vim", on ? "true" : "false");
     ctx.toast("Editor setting saved");
   });
+  const tabInput = root.querySelector("#set-tab-size");
+  tabInput.addEventListener("change", async () => {
+    const n = clampTabSize(parseInt(tabInput.value, 10));
+    tabInput.value = n;
+    await ctx.api.setSetting("editor_tab_size", String(n));
+    ctx.toast("Editor setting saved");
+  });
 
   root.querySelector("#save-study").addEventListener("click", async () => {
     await saveConfig(ctx, form.collect());
@@ -292,15 +352,17 @@ export async function renderSettings(container, ctx) {
       const v = parseFloat(root.querySelector(id).value);
       return Number.isFinite(v) ? v : dflt;
     };
-    const weights = root
-      .querySelector("#fsrs-weights")
-      .value.split(",")
-      .map((x) => parseFloat(x.trim()))
-      .filter((x) => Number.isFinite(x));
-    if (weights.length !== FSRS_DEFAULTS.weights.length) {
-      alert(`FSRS needs exactly ${FSRS_DEFAULTS.weights.length} weights (got ${weights.length}).`);
-      return;
-    }
+    // Each weight is read from its own row and clamped to its published range. The
+    // backend clamps independently — this is for feedback, not for safety.
+    const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+    const weights = FSRS_WEIGHT_META.map((m, i) =>
+      clamp(num(`#fsrs-w${i}`, FSRS_DEFAULTS.weights[i]), m.min, m.max)
+    );
+    const retention = clamp(
+      num("#fsrs-retention", FSRS_DEFAULTS.requestRetention),
+      FSRS_RETENTION.min,
+      FSRS_RETENTION.max
+    );
     await ctx.api.setSetting("sr_algorithm", algoSel.value);
     await ctx.api.setSetting(
       "sm2_params",
@@ -310,12 +372,29 @@ export async function renderSettings(container, ctx) {
         hardMultiplier: num("#sm2-hard-mult", SM2_DEFAULTS.hardMultiplier),
       })
     );
-    await ctx.api.setSetting(
-      "fsrs_params",
-      JSON.stringify({ requestRetention: num("#fsrs-retention", FSRS_DEFAULTS.requestRetention), weights })
-    );
+    await ctx.api.setSetting("fsrs_params", JSON.stringify({ requestRetention: retention, weights }));
+    // Show what was stored, so a clamped value doesn't silently differ from the field.
+    root.querySelector("#fsrs-retention").value = retention;
+    weights.forEach((w, i) => {
+      root.querySelector(`#fsrs-w${i}`).value = w;
+    });
     ctx.toast("Spaced-repetition settings saved");
   });
+  // Per-row reset: each row carries its own default, so this needs no lookup table.
+  root.querySelectorAll(".param-reset").forEach((b) =>
+    b.addEventListener("click", () => {
+      const input = root.querySelector(`#${b.dataset.for}`);
+      input.value = b.closest(".param-row").dataset.default;
+      input.focus();
+    })
+  );
+  root.querySelector("#reset-fsrs-weights").addEventListener("click", () => {
+    FSRS_DEFAULTS.weights.forEach((w, i) => {
+      root.querySelector(`#fsrs-w${i}`).value = w;
+    });
+    ctx.toast("Weights reset — save to apply");
+  });
+
   root.querySelector("#reset-sr").addEventListener("click", async () => {
     if (!confirm("Reset spaced-repetition settings to defaults?")) return;
     await ctx.api.setSetting("sr_algorithm", DEFAULT_ALGORITHM);
@@ -551,8 +630,8 @@ function renderIntegrity(root, ctx) {
   ctx.state.allShards.forEach((s) => {
     const tags = s.tags || [];
     const issues = [];
-    // A card needs a *real* organizing deck — the auto Debt deck doesn't count.
-    if (!(s.deckIds || []).some((id) => id !== DEBT_DECK_ID)) issues.push("no deck");
+    // A card needs a *real* organizing deck — the derived ones don't count.
+    if (!(s.deckIds || []).some((id) => !DERIVED_DECK_IDS.has(id))) issues.push("no deck");
     if (!getDifficulty(tags)) issues.push("no difficulty");
     if (issues.length) hard.push({ s, issues });
     // Topic tag = any tag that isn't a reserved keyword tag.
@@ -599,7 +678,7 @@ function renderIntegrity(root, ctx) {
 }
 
 // Render the editable list of decks (rename, change preset, delete, set daily).
-// `hideNative` drops the built-in Default/Debt decks from the list (item 2).
+// `hideNative` drops the built-in Default/Debt/Archived decks from the list.
 function renderDecks(root, ctx, dailyDeck = "", hideNative = false) {
   const list = root.querySelector("#deck-list");
   let decks = ctx.decks();
@@ -612,15 +691,16 @@ function renderDecks(root, ctx, dailyDeck = "", hideNative = false) {
   }
 
   decks.forEach((d) => {
-    const isDebt = d.id === DEBT_DECK_ID;
-    // Native decks (Default/Debt) ship with Bonfire: greyed, no rename, no delete.
+    const isDerived = DERIVED_DECK_IDS.has(d.id);
+    // Native decks (Default/Debt/Archived) ship with Bonfire: greyed, no rename,
+    // no delete.
     const isProtected = isNativeDeck(d.id);
     const isDaily = d.id === dailyDeck;
     const count = ctx.state.allShards.filter((s) => (s.deckIds || []).includes(d.id)).length;
     const row = el(`
       <div class="list-row ${isProtected ? "native-deck" : ""}">
         <span class="title">${esc(d.name) || "(unnamed)"}</span>
-        ${isProtected ? `<span class="badge" title="Built-in deck — required by Hearth, can't be renamed or deleted">${isDebt ? "auto" : "built-in"}</span>` : ""}
+        ${isProtected ? `<span class="badge" title="Built-in deck — required by Hearth, can't be renamed or deleted">${isDerived ? "auto" : "built-in"}</span>` : ""}
         <span class="cat">${count} card${count === 1 ? "" : "s"}</span>
         ${
           isDaily

@@ -5,6 +5,7 @@ mod merge;
 mod models;
 mod sm2;
 mod sync;
+mod update;
 mod vault;
 
 use models::{DayCount, DayDetail, Deck, Playbook, PlaybookDetail, PlaybookNode, Shard, VaultExport};
@@ -93,8 +94,8 @@ fn delete_deck(state: State<AppState>, id: String) -> Result<(), String> {
     if id == db::DEFAULT_DECK_ID {
         return Err("The default deck cannot be deleted.".into());
     }
-    if id == db::DEBT_DECK_ID {
-        return Err("The Debt deck cannot be deleted.".into());
+    if db::DERIVED_DECK_IDS.contains(&id.as_str()) {
+        return Err("Hearth's automatic decks cannot be deleted.".into());
     }
     with_conn(&state, |c| db::delete_deck(c, &id))
 }
@@ -156,11 +157,35 @@ fn playbook_card_ids(state: State<AppState>) -> Result<Vec<String>, String> {
     with_conn(&state, |c| db::playbook_card_ids(c))
 }
 
-/// Reconcile the Debt deck with the current overdue cards (item 5). Called by the
-/// frontend on refresh; cheap, set-based SQL.
+/// Reconcile the derived decks (Debt, Archived) with the cards' current state.
+/// Called by the frontend on refresh; cheap, set-based SQL.
 #[tauri::command]
-fn sync_debt_deck(state: State<AppState>) -> Result<(), String> {
-    with_conn(&state, |c| db::sync_debt_deck(c))
+fn sync_derived_decks(state: State<AppState>) -> Result<(), String> {
+    with_conn(&state, |c| db::sync_derived_decks(c))
+}
+
+/// Star or unstar cards. Narrow on purpose — see `db::set_shard_hint`.
+#[tauri::command]
+fn set_favorite(state: State<AppState>, ids: Vec<String>, favorite: bool) -> Result<usize, String> {
+    with_conn(&state, |c| db::set_favorite(c, &ids, favorite))
+}
+
+/// Take cards in or out of the review rotation. Archived cards leave the study
+/// queue and the Debt deck and land in Archived, keeping every real deck they were
+/// already in. Narrow on purpose — see `db::set_review_enabled`.
+#[tauri::command]
+fn set_review_enabled(
+    state: State<AppState>,
+    ids: Vec<String>,
+    enabled: bool,
+) -> Result<usize, String> {
+    with_conn(&state, |c| db::set_review_enabled(c, &ids, enabled))
+}
+
+/// Save just the study hint. Narrow on purpose — see `db::set_shard_hint`.
+#[tauri::command]
+fn set_shard_hint(state: State<AppState>, id: String, hint: String) -> Result<(), String> {
+    with_conn(&state, |c| db::set_shard_hint(c, &id, &hint))
 }
 
 #[tauri::command]
@@ -277,16 +302,18 @@ fn sm2_config_from(json: Option<String>) -> sm2::Sm2Config {
 fn fsrs_config_from(json: Option<String>) -> fsrs::FsrsConfig {
     let mut cfg = fsrs::FsrsConfig::default();
     if let Some(v) = json.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()) {
+        let (r_lo, r_hi) = fsrs::RETENTION_BOUNDS;
         if let Some(x) = v.get("requestRetention").and_then(|x| x.as_f64()) {
-            if (0.7..=0.97).contains(&x) {
-                cfg.request_retention = x;
+            if x.is_finite() {
+                cfg.request_retention = x.clamp(r_lo, r_hi);
             }
         }
         if let Some(arr) = v.get("weights").and_then(|x| x.as_array()) {
             if arr.len() == fsrs::W_LEN {
                 for (i, item) in arr.iter().enumerate() {
-                    if let Some(f) = item.as_f64() {
-                        cfg.weights[i] = f;
+                    if let Some(f) = item.as_f64().filter(|f| f.is_finite()) {
+                        let (lo, hi) = fsrs::WEIGHT_BOUNDS[i];
+                        cfg.weights[i] = f.clamp(lo, hi);
                     }
                 }
             }
@@ -296,6 +323,11 @@ fn fsrs_config_from(json: Option<String>) -> fsrs::FsrsConfig {
 }
 
 /// Days elapsed since an RFC-3339 timestamp (0 if empty/unparseable).
+///
+/// Measured from when the card was last *reviewed*, not from when it was last due.
+/// That is what makes archiving safe to leave alone: a card set aside for six
+/// months comes back with a genuinely low retrievability, and FSRS treats it as the
+/// long gap it was. Nothing has to decay it on a timer.
 fn elapsed_days(last_reviewed: &str) -> i64 {
     if last_reviewed.is_empty() {
         return 0;
@@ -309,36 +341,12 @@ fn elapsed_days(last_reviewed: &str) -> i64 {
     }
 }
 
-/// Apply a scheduling update for a review, persist, log it, and return the
-/// updated shard. Branches on the global `sr_algorithm` setting (SM-2 vs FSRS).
-/// Used by both the review session and "Mark Reviewed".
-fn apply_review(
-    state: &State<AppState>,
-    id: &str,
-    rating: &str,
-    duration_ms: i64,
-    session_id: &str,
-    cram: bool,
-) -> Result<Shard, String> {
-    let mut shard = with_conn(state, |c| db::get_shard(c, id))?
-        .ok_or_else(|| format!("Shard not found: {}", id))?;
-
-    let algorithm = if read_setting(state, "sr_algorithm").as_deref() == Some("fsrs") {
-        "fsrs"
-    } else {
-        "sm2"
-    };
-
-    // Cram mode is pure practice: it must NOT touch the scheduler. Skip all
-    // SM-2/FSRS math and the per-card scheduling/last_reviewed updates, but still
-    // log the review so the heatmap / streak / retention counters reflect it.
-    if cram {
-        with_conn(state, |c| {
-            db::log_review(c, id, &shard.deck_id, rating, "cram", duration_ms, session_id)
-        })?;
-        return Ok(shard);
-    }
-
+/// Run the active scheduler for `rating` and write the result onto `shard`.
+///
+/// Nothing is persisted here — the caller decides. Both the real review and the
+/// grade preview go through this one function, which is the point: a preview that
+/// computed its own dates would drift from what pressing the button actually does.
+fn schedule_onto(state: &State<AppState>, shard: &mut Shard, rating: &str, algorithm: &str) {
     if algorithm == "fsrs" {
         let cfg = fsrs_config_from(read_setting(state, "fsrs_params"));
         let grade = fsrs::grade_from_rating(rating);
@@ -375,6 +383,75 @@ fn apply_review(
         shard.review_ease = r.ease;
         shard.review_next = r.next;
     }
+}
+
+/// The ratings offered at review time, weakest first.
+pub const RATINGS: [&str; 4] = ["forgot", "hard", "good", "easy"];
+
+/// Where each grade would send this card, for the labels under the grade buttons.
+#[derive(serde::Serialize)]
+pub struct GradePreview {
+    rating: String,
+    interval: i64,
+    /// "YYYY-MM-DD" — the day the card next becomes due.
+    next: String,
+}
+
+/// Dry-run every grade against a card. Persists nothing.
+#[tauri::command]
+fn preview_review(state: State<AppState>, id: String) -> Result<Vec<GradePreview>, String> {
+    let shard = with_conn(&state, |c| db::get_shard(c, &id))?
+        .ok_or_else(|| format!("Shard not found: {}", id))?;
+    let algorithm = if read_setting(&state, "sr_algorithm").as_deref() == Some("fsrs") {
+        "fsrs"
+    } else {
+        "sm2"
+    };
+    Ok(RATINGS
+        .iter()
+        .map(|rating| {
+            let mut probe = shard.clone();
+            schedule_onto(&state, &mut probe, rating, algorithm);
+            GradePreview {
+                rating: (*rating).to_string(),
+                interval: probe.review_interval,
+                next: probe.review_next,
+            }
+        })
+        .collect())
+}
+
+/// Apply a scheduling update for a review, persist, log it, and return the
+/// updated shard. Branches on the global `sr_algorithm` setting (SM-2 vs FSRS).
+/// Used by both the review session and "Mark Reviewed".
+fn apply_review(
+    state: &State<AppState>,
+    id: &str,
+    rating: &str,
+    duration_ms: i64,
+    session_id: &str,
+    cram: bool,
+) -> Result<Shard, String> {
+    let mut shard = with_conn(state, |c| db::get_shard(c, id))?
+        .ok_or_else(|| format!("Shard not found: {}", id))?;
+
+    let algorithm = if read_setting(state, "sr_algorithm").as_deref() == Some("fsrs") {
+        "fsrs"
+    } else {
+        "sm2"
+    };
+
+    // Cram mode is pure practice: it must NOT touch the scheduler. Skip all
+    // SM-2/FSRS math and the per-card scheduling/last_reviewed updates, but still
+    // log the review so the heatmap / streak / retention counters reflect it.
+    if cram {
+        with_conn(state, |c| {
+            db::log_review(c, id, &shard.deck_id, rating, "cram", duration_ms, session_id)
+        })?;
+        return Ok(shard);
+    }
+
+    schedule_onto(state, &mut shard, rating, algorithm);
 
     shard.last_reviewed = now_iso();
     shard.modified_at = now_iso();
@@ -409,6 +486,12 @@ fn submit_review(
 #[tauri::command]
 fn review_history(state: State<AppState>) -> Result<Vec<DayCount>, String> {
     with_conn(&state, |c| db::review_history(c))
+}
+
+/// Lifetime per-card review totals, for the stats page.
+#[tauri::command]
+fn card_stats(state: State<AppState>) -> Result<Vec<models::CardStat>, String> {
+    with_conn(&state, |c| db::card_stats(c))
 }
 
 /// Rich per-day study detail (count, time, sessions, per-deck) for the heatmap tooltip.
@@ -493,6 +576,15 @@ fn sync_now(state: State<AppState>) -> Result<String, String> {
     sync::sync_now(&conn, &state.dir)
 }
 
+/// Fast-forward the source checkout from GitHub `main` and rebuild (see update.rs).
+///
+/// Deliberately does NOT take the connection lock: a rebuild takes minutes, and
+/// holding the mutex for that long would freeze every other command.
+#[tauri::command]
+fn check_and_update(state: State<AppState>) -> update::UpdateResult {
+    update::check_and_update(&state.dir)
+}
+
 #[tauri::command]
 fn sync_status(state: State<AppState>) -> Result<sync::SyncStatus, String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
@@ -567,10 +659,15 @@ pub fn run() {
             delete_playbook,
             save_playbook_nodes,
             playbook_card_ids,
-            sync_debt_deck,
+            sync_derived_decks,
+            set_review_enabled,
+            set_favorite,
+            set_shard_hint,
             submit_review,
+            preview_review,
             review_history,
             study_days,
+            card_stats,
             rename_tag,
             delete_tag,
             get_setting,
@@ -585,6 +682,7 @@ pub fn run() {
             sync_status,
             list_sync_conflicts,
             resolve_sync_conflict,
+            check_and_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

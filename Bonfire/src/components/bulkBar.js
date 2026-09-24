@@ -98,6 +98,20 @@ export async function bulkRemoveFromDeck(ctx, ids) {
   return true;
 }
 
+// Archiving is a scheduling change, not a field edit, so it goes through the narrow
+// set_review_enabled command rather than applyToShards' whole-shard saves.
+export async function bulkArchive(ctx, ids) {
+  await ctx.api.setReviewEnabled(ids, false);
+  ctx.toast(`Archived ${ids.length} card(s)`);
+  return true;
+}
+
+export async function bulkUnarchive(ctx, ids) {
+  await ctx.api.setReviewEnabled(ids, true);
+  ctx.toast(`Returned ${ids.length} card(s) to the rotation`);
+  return true;
+}
+
 export async function bulkRetag(ctx, ids) {
   const raw = prompt(
     "Set tags for the selected cards (comma-separated). This REPLACES their current tags:"
@@ -369,6 +383,8 @@ export function fieldMenuItems(runBulk) {
     { label: "Reveal-only flag…", run: () => runBulk(bulkSetRevealOnly) },
     { label: "Source…", run: () => runBulk(bulkSetSource) },
     { label: "Tags (replace)…", run: () => runBulk(bulkRetag) },
+    { label: "Archive (stop reviewing)", run: () => runBulk(bulkArchive) },
+    { label: "Unarchive (resume reviewing)", run: () => runBulk(bulkUnarchive) },
   ];
 }
 

@@ -129,8 +129,14 @@ fn attempt_sync(conn: &Connection, dir: &Path) -> Result<String, String> {
     let local = vault::read_db(conn).map_err(|e| e.to_string())?;
 
     // A remote with no branches yet is a brand-new private repo — there is
-    // nothing to merge, so publish and we are done.
-    if crate::git::remote_is_empty(dir)? {
+    // nothing to merge, so publish and we are done. A recorded base proves we have
+    // already published, so skip the `ls-remote` round-trip on every later sync.
+    //
+    // The rest of a sync is dominated by two full `git archive` + untar + read_tree
+    // passes (remote and base), which re-read and base64 every media file, and by
+    // write_tree rewriting cards/decks/playbooks/reviews wholesale. Both are worth
+    // revisiting if sync stays slow.
+    if crate::git::base_commit(dir).is_none() && crate::git::remote_is_empty(dir)? {
         vault::write_tree(dir, &local).map_err(|e| e.to_string())?;
         let committed = crate::git::commit_all(dir, &commit_message(conn, &local), None)?;
         crate::git::push(dir)?;
@@ -170,7 +176,7 @@ fn attempt_sync(conn: &Connection, dir: &Path) -> Result<String, String> {
     vault::write_db(conn, &merged.data).map_err(|e| e.to_string())?;
     // The Debt deck is derived from due dates and is deliberately not synced, so
     // recompute it now that the merged due dates have landed.
-    let _ = db::sync_debt_deck(conn);
+    let _ = db::sync_derived_decks(conn);
 
     let device = device_id(conn);
     for c in &merged.conflicts {

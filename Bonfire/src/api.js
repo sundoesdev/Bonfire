@@ -17,7 +17,11 @@ export const clearReviewLog = () => invoke("clear_review_log");
 export const listDecks = () => invoke("list_decks");
 export const saveDeck = (deck) => invoke("save_deck", { deck });
 export const deleteDeck = (id) => invoke("delete_deck", { id });
-export const syncDebtDeck = () => invoke("sync_debt_deck");
+export const syncDerivedDecks = () => invoke("sync_derived_decks");
+// Takes cards in/out of the review rotation. Narrow like setShardHint — never use
+// saveShard for this, it would push a stale schedule over a concurrent review.
+export const setReviewEnabled = (ids, enabled) => invoke("set_review_enabled", { ids, enabled });
+export const setFavorite = (ids, favorite) => invoke("set_favorite", { ids, favorite });
 // Playbooks: ordered, self-authored tutorials over existing cards (see playbooks.js).
 export const listPlaybooks = () => invoke("list_playbooks");
 export const getPlaybook = (id) => invoke("get_playbook", { id });
@@ -25,10 +29,17 @@ export const savePlaybook = (playbook) => invoke("save_playbook", { playbook });
 export const deletePlaybook = (id) => invoke("delete_playbook", { id });
 export const savePlaybookNodes = (playbookId, nodes) => invoke("save_playbook_nodes", { playbookId, nodes });
 export const playbookCardIds = () => invoke("playbook_card_ids");
+// Writes only the hint column. Never use saveShard for this from the study view —
+// that would push a stale copy of the schedule over what submitReview just wrote.
+export const setShardHint = (id, hint) => invoke("set_shard_hint", { id, hint });
 export const submitReview = (id, rating, durationMs, sessionId, cram = false) =>
   invoke("submit_review", { id, rating, durationMs, sessionId, cram });
+// Dry-runs every grade against a card so the buttons can show where each one lands.
+// Persists nothing; shares the scheduler with submitReview so the labels can't drift.
+export const previewReview = (id) => invoke("preview_review", { id });
 export const reviewHistory = () => invoke("review_history");
 export const studyDays = () => invoke("study_days");
+export const cardStats = () => invoke("card_stats");
 export const renameTag = (oldName, newName) => invoke("rename_tag", { old: oldName, new: newName });
 export const deleteTag = (tag) => invoke("delete_tag", { tag });
 export const getSetting = (key) => invoke("get_setting", { key });
@@ -46,6 +57,9 @@ export const syncStatus = () => invoke("sync_status");
 export const listSyncConflicts = () => invoke("list_sync_conflicts");
 export const resolveSyncConflict = (id, restore = false) =>
   invoke("resolve_sync_conflict", { id, restore });
+// Self-update from the source checkout. Resolves to { status, detail }; a rebuild
+// takes minutes, so callers must not await it on a path the user is waiting on.
+export const checkAndUpdate = () => invoke("check_and_update");
 
 const JSON_FILTER = [{ name: "JSON", extensions: ["json"] }];
 

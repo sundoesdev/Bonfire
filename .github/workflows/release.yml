@@ -77,9 +77,25 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: Bonfire
-          tagName: ${{ github.ref_name }}
-          releaseName: "Bonfire ${{ github.ref_name }}"
-          releaseBody: "Download the installer for your OS below. Builds are unsigned, so Windows SmartScreen / macOS Gatekeeper may show a one-time \"unknown developer\" warning."
+          # A manual run has no tag, so fall back to `v__VERSION__`, which
+          # tauri-action substitutes from tauri.conf.json — otherwise the release
+          # would be named after whichever branch it ran from.
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v__VERSION__' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('Hearth {0}', github.ref_name) || 'Hearth v__VERSION__' }}
+          releaseBody: |
+            Download the installer for your OS below.
+
+            * **Windows** — `Hearth_*_x64-setup.exe` (or the `.msi`). Installs for
+              the current user, so no admin prompt. Uninstall through
+              Settings → Apps; your cards in `%APPDATA%\com.bonfire.app\` are left
+              in place.
+            * **Linux** — build from source with `./install.sh`, which is the
+              supported path. See the README.
+            * **macOS** — built but untested.
+
+            Builds are unsigned, so Windows SmartScreen and macOS Gatekeeper show a
+            one-time "unknown developer" warning. Installing and uninstalling is
+            documented in [docs/INSTALL.md](https://github.com/sundoesdev/Bonfire/blob/main/docs/INSTALL.md).
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

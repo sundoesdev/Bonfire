@@ -113,6 +113,12 @@ export const DEFAULT_DECK_ID = "default";
 // The always-present, non-deletable auto "Debt" deck (overdue cards). Kept in
 // sync by the backend; mirror of db.rs DEBT_DECK_ID.
 export const DEBT_DECK_ID = "card-debt";
+// The always-present, non-deletable auto "Archived" deck: cards switched out of the
+// review rotation. Mirror of db.rs ARCHIVE_DECK_ID.
+export const ARCHIVE_DECK_ID = "card-archive";
+// Decks whose membership the backend derives from card state. Never hand-assigned,
+// never synced — mirror of db.rs DERIVED_DECK_IDS.
+export const DERIVED_DECK_IDS = new Set([DEBT_DECK_ID, ARCHIVE_DECK_ID]);
 // Sentinel "deck" meaning every card regardless of membership — the library of all
 // cards (decks are wrappers, so a card lives here whether it's in 0 or many decks).
 export const ALL_DECKS = "__all__";
@@ -121,7 +127,7 @@ export const DEFAULT_PRESET = "code";
 // "Native" decks ship with Bonfire and are required for its functionality — they
 // can't be deleted or renamed (item 2, notes-03). Settings can grey them out and
 // optionally hide them from the deck-management list.
-export const NATIVE_DECK_IDS = new Set([DEFAULT_DECK_ID, DEBT_DECK_ID]);
+export const NATIVE_DECK_IDS = new Set([DEFAULT_DECK_ID, DEBT_DECK_ID, ARCHIVE_DECK_ID]);
 
 export function isNativeDeck(id) {
   return NATIVE_DECK_IDS.has(id);
@@ -255,6 +261,44 @@ export const FSRS_DEFAULTS = {
   requestRetention: 0.9,
   weights: FSRS_DEFAULT_WEIGHTS,
 };
+
+// What each FSRS weight does, and the range it may be set to. The bounds are the
+// FSRS optimizer's own WeightClipper values — the range the model was fitted
+// within — and are mirrored by WEIGHT_BOUNDS in fsrs.rs, which clamps for real.
+// Order matches FSRS_DEFAULT_WEIGHTS.
+export const FSRS_WEIGHT_META = [
+  { label: "Initial stability — Forgot", help: "Days a card is worth remembering after you fail it the very first time.", min: 0.01, max: 100 },
+  { label: "Initial stability — Hard", help: "Same, for a first review graded Hard.", min: 0.01, max: 100 },
+  { label: "Initial stability — Good", help: "Same, for a first review graded Good. Sets the whole ladder's starting rung.", min: 0.01, max: 100 },
+  { label: "Initial stability — Easy", help: "Same, for a first review graded Easy.", min: 0.01, max: 100 },
+  { label: "Initial difficulty", help: "Difficulty a card starts at when first graded Good. Higher = the model treats your cards as harder overall.", min: 1, max: 10 },
+  { label: "Difficulty spread by grade", help: "How far the starting difficulty moves per grade away from Good.", min: 0.1, max: 5 },
+  { label: "Difficulty change per grade", help: "How much each later review shifts difficulty. Raise it to make the model react harder to a bad grade.", min: 0.1, max: 5 },
+  { label: "Difficulty mean reversion", help: "Pull back toward the initial difficulty on every review. 0 disables it, so difficulty only ever drifts.", min: 0, max: 0.75 },
+  { label: "Stability growth scale", help: "Master gain on how much a successful review extends a card. The biggest single lever on interval growth.", min: 0, max: 4 },
+  { label: "Stability saturation", help: "How much harder it gets to extend an already-stable card. Higher = long intervals grow more slowly.", min: 0, max: 0.8 },
+  { label: "Low-recall bonus", help: "Extra credit for recalling a card you had nearly forgotten.", min: 0.01, max: 3 },
+  { label: "Post-lapse stability", help: "How much memory survives forgetting a card. Higher = lapses hurt less.", min: 0.5, max: 5 },
+  { label: "Post-lapse difficulty penalty", help: "How much a card's difficulty worsens its recovery from a lapse.", min: 0.01, max: 0.2 },
+  { label: "Post-lapse stability carry", help: "How much of the old stability carries through a lapse.", min: 0.01, max: 0.9 },
+  { label: "Post-lapse recall factor", help: "How much it matters that you nearly remembered it before lapsing.", min: 0.01, max: 3 },
+  { label: "Hard penalty", help: "Multiplier applied when you grade Hard. Below 1 shortens the interval Hard earns.", min: 0, max: 1 },
+  { label: "Easy bonus", help: "Multiplier applied when you grade Easy. Above 1 pushes Easy cards further out.", min: 1, max: 6 },
+];
+
+// Retention is the one knob worth understanding: it is the recall probability you
+// are scheduling for, and it divides every interval. Mirrored by RETENTION_BOUNDS
+// in fsrs.rs. See FSRS_RETENTION_HELP for the copy shown beside it.
+export const FSRS_RETENTION = { min: 0.9, max: 0.99, step: 0.01, default: 0.9 };
+
+// ---- Answer editor ----
+// How far one Tab indents in the study answer editor, and the bounds a user may
+// set it to. Device-local (like `editor_vim`) — it is a per-machine preference,
+// not something to push at your other devices through the vault.
+export const DEFAULT_TAB_SIZE = 4;
+export const TAB_SIZE_RANGE = { min: 1, max: 16 };
+export const clampTabSize = (n) =>
+  Number.isFinite(n) ? Math.min(TAB_SIZE_RANGE.max, Math.max(TAB_SIZE_RANGE.min, Math.round(n))) : DEFAULT_TAB_SIZE;
 
 // ---- Media attachments ----
 // Cards can carry inline image/audio attachments (base64 data-URLs) on either

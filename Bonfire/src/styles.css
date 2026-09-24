@@ -57,7 +57,7 @@
 
   /* ---- Typography ---- */
   --font-serif: "Fraunces", Georgia, "Times New Roman", serif;
-  --font-mono: ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
+  --font-mono: "JetBrains Mono", "JetBrainsMono Nerd Font", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
 
   /* ---- Legacy aliases (existing component CSS still references these) ---- */
   --panel: var(--surface);
@@ -162,6 +162,64 @@ option { background: var(--input); color: var(--text); }
 @keyframes update-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(0, 120, 212, 0.45); }
   50% { box-shadow: 0 0 0 4px rgba(0, 120, 212, 0); }
+}
+
+/* ---- Boot splash: the ember mark, held while the vault opens and syncs.
+   Token-driven, so it follows Light/Coal & Ember without a second rule set. ---- */
+#boot-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  background: var(--surface-2);
+  animation: boot-in 220ms var(--ease) both;
+  transition: opacity var(--t-slow) var(--ease);
+}
+#boot-overlay.leaving { opacity: 0; }
+/* The pulsing ember ring sits on the wrapper so it can bloom past the glyph. */
+.boot-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 96px;
+  height: 96px;
+  border-radius: var(--r-pill);
+  animation: ember-ring 2.8s var(--ease) -0.6s infinite;
+}
+.boot-mark i {
+  font-size: 64px;
+  line-height: 1;
+  color: var(--accent);
+  animation: ember-flicker 2.8s ease-in-out infinite;
+}
+.boot-word {
+  font-family: var(--font-serif);
+  font-size: 28px;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+.boot-status { font-size: 13px; color: var(--text-2); }
+
+@keyframes boot-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes ember-flicker {
+  0%, 100% { opacity: 0.78; transform: scale(1); filter: drop-shadow(0 0 8px rgba(199, 91, 57, 0.2)); }
+  45% { opacity: 1; transform: scale(1.05); filter: drop-shadow(0 0 14px rgba(199, 91, 57, 0.35)); }
+  70% { opacity: 0.85; transform: scale(1.02); filter: drop-shadow(0 0 10px rgba(199, 91, 57, 0.26)); }
+}
+@keyframes ember-ring {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(199, 91, 57, 0.22); }
+  60% { box-shadow: 0 0 0 22px rgba(199, 91, 57, 0); }
+}
+/* Reduced motion: keep the mark, drop the movement. */
+@media (prefers-reduced-motion: reduce) {
+  #boot-overlay, .boot-mark, .boot-mark i { animation: none; }
 }
 
 /* ---- Sidebar ---- */
@@ -486,6 +544,22 @@ textarea { resize: vertical; }
   padding: 2px 9px;
   white-space: nowrap;
 }
+/* An archived card is set aside, not flagged — quieter than a normal pill. */
+.pill-muted { background: transparent; border: 0.5px solid var(--border-strong); color: var(--muted-2); }
+/* Favourite star: a quiet outline until it's on, then the accent. */
+.cm-fav { min-width: 38px; font-size: 15px; line-height: 1; padding: 6px 10px; }
+.cm-fav.on { color: var(--accent); border-color: var(--accent); }
+.fav-star { color: var(--accent); font-size: 12px; }
+/* "Most studied" rows: a rank, then the card, then what it cost you. */
+.studied-row { cursor: pointer; }
+.studied-rank {
+  min-width: 22px; text-align: right; font-family: var(--font-mono);
+  font-size: 11px; color: var(--muted-2);
+}
+.studied-rank.top { color: var(--accent); font-weight: 600; }
+/* H:MM:SS needs to fit without shrinking the card, so it sits a notch smaller
+   than the other stat numbers and uses tabular figures. */
+.stat-time { font-size: 26px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .pill-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--dot, var(--text-3)); filter: saturate(0.7); flex-shrink: 0; }
 /* Right-aligned muted row meta ("Lang · difficulty") used on the dashboard. */
 .row-meta { margin-left: auto; color: var(--text-3); font-size: 11px; white-space: nowrap; }
@@ -595,12 +669,31 @@ textarea { resize: vertical; }
   margin-bottom: 12px;
 }
 .form-grid label { color: var(--muted-2); text-align: right; }
+/* One tunable parameter per row: name + explanation, a bounded input, a reset.
+   Used by the FSRS knobs, which are too many and too opaque for a bare grid. */
+.param-row {
+  display: grid;
+  grid-template-columns: 1fr 96px auto;
+  gap: 10px;
+  align-items: start;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.param-row:last-of-type { border-bottom: none; }
+.param-head label { display: block; font-weight: 500; margin-bottom: 2px; cursor: pointer; }
+.param-help { color: var(--muted-2); font-size: 12px; line-height: 1.45; }
+.param-input { width: 100%; font-family: var(--font-mono); }
+.param-reset { align-self: start; padding: 4px 10px; font-size: 11px; }
+@media (max-width: 720px) {
+  .param-row { grid-template-columns: 1fr auto; }
+  .param-head { grid-column: 1 / -1; }
+}
 .code-block, .code-editor {
   background: var(--code-bg);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
   color: var(--code-text);
-  font-family: monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   padding: 10px;
   white-space: pre;
@@ -608,7 +701,7 @@ textarea { resize: vertical; }
   box-shadow: inset var(--shadow-sm);
 }
 .code-block { min-height: 120px; margin: 4px 0 12px; }
-.code-block code { white-space: pre; font-family: monospace; }
+.code-block code { white-space: pre; font-family: var(--font-mono); }
 .code-editor { min-height: 200px; width: 100%; white-space: pre; }
 .title-big { font-family: var(--font-serif); font-size: 18px; font-weight: 500; margin: 4px 0; }
 .meta-line { color: var(--muted); margin-bottom: 10px; }
@@ -625,12 +718,56 @@ textarea { resize: vertical; }
   box-shadow: var(--shadow-lg);
 }
 .review-card .sep { border: none; border-top: 1px solid var(--glass-border); margin: 14px 0; }
+/* Hints layout (opt-in): card and notes pane side by side, the pair centred as one
+   unit so the card doesn't shift when the pane is toggled off. */
+.study-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  max-width: 1056px;
+  margin: 16px auto;
+}
+.study-row .review-card { flex: 1 1 760px; margin: 0; min-width: 0; }
+.hint-pane {
+  flex: 0 0 264px;
+  padding: 18px;
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-md);
+}
+.hint-input {
+  width: 100%;
+  min-height: 180px;
+  margin-top: 6px;
+  padding: 10px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.hint-help { margin-top: 8px; font-size: 11.5px; line-height: 1.45; color: var(--text-3); }
+/* Skip / End session / Queue: line up with whatever is above them, which is wider
+   when the Hints pane is showing. */
+.study-controls { max-width: 760px; margin: 0 auto; gap: 8px; }
+.study-row ~ .study-controls { max-width: 1056px; }
+@media (max-width: 1060px) {
+  .study-row, .study-row ~ .study-controls { max-width: 760px; }
+  .study-row { flex-direction: column; }
+  .hint-pane { flex: 1 1 auto; width: 100%; }
+  .hint-input { min-height: 90px; }
+}
 .hidden-code-msg { color: var(--muted); font-style: italic; text-align: center; padding: 24px 0; }
 .progress { color: var(--muted); text-align: right; max-width: 760px; margin: 0 auto; }
 /* Reveal-and-grade beat: bordered surface cards (chip stacked above a colored
    label), not filled bars. The warm per-grade spectrum lives in tokens (calm —
    "Forgot" is a warm brick, never a shame state) with Dark variants below. */
 .rating { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 14px; }
+@media (max-width: 720px) { .rating { grid-template-columns: repeat(2, 1fr); } }
 .rating button {
   display: flex; flex-direction: column; align-items: center; gap: 4px;
   padding: 10px 6px; height: auto;
@@ -643,15 +780,26 @@ textarea { resize: vertical; }
 .rating .hard { color: var(--grade-hard); }
 .rating .good { color: var(--grade-good); }
 .rating .easy { color: var(--grade-easy); }
-/* The 1/2/3/4 hotkey hint chip on each rating button (item 4). */
+/* The 1–4 hotkey hint chip on each rating button. */
 .rating-key { display: inline-block; min-width: 16px; padding: 1px 6px; border-radius: 5px; font-size: 10px; font-weight: 600; font-family: var(--font-mono); }
 .rating .forgot .rating-key { background: var(--grade-forgot-chip); color: var(--grade-forgot); }
 .rating .hard .rating-key { background: var(--grade-hard-chip); color: var(--grade-hard); }
 .rating .good .rating-key { background: var(--grade-good-chip); color: var(--grade-good); }
 .rating .easy .rating-key { background: var(--grade-easy-chip); color: var(--grade-easy); }
+.rating-line { display: inline-flex; align-items: center; gap: 6px; }
+/* Where this grade actually lands. Quiet — it informs the choice, it isn't the
+   choice. Reserves its own height so the row doesn't jump when the preview lands. */
+.rating-when {
+  white-space: pre-line; text-align: center; line-height: 1.35;
+  font-size: 10.5px; color: var(--muted-2); min-height: 2.7em;
+}
 /* Keyboard hint chip on the Submit button. */
 .kbd { font-size: 10.5px; background: rgba(255,255,255,0.22); border-radius: 5px; padding: 2px 6px; font-family: var(--font-mono); margin-left: 4px; }
 .full-width { width: 100%; }
+/* Submit sits bottom-right at a fixed size rather than spanning the card — it is
+   confirmation, not the main event, and Ctrl+Enter is the real path anyway. */
+.controls-end { display: flex; justify-content: flex-end; margin-top: 10px; }
+.btn-submit { width: 190px; justify-content: center; }
 
 /* ---- Modal (Quick Capture) ---- */
 #modal-root:empty { display: none; }
@@ -847,7 +995,7 @@ textarea { resize: vertical; }
 
 /* ---- Study session ---- */
 .progress-row { max-width: 760px; margin: 0 auto 4px; }
-.timer { font-family: monospace; font-size: 15px; color: var(--muted-2); }
+.timer { font-family: var(--font-mono); font-size: 15px; color: var(--muted-2); }
 .timer.overtime { color: var(--danger); font-weight: 600; }
 .time-banner {
   max-width: 760px;
@@ -864,6 +1012,19 @@ textarea { resize: vertical; }
 /* ---- Answer comparison ---- */
 .compare { display: flex; gap: 12px; }
 .compare-col { flex: 1; min-width: 0; }
+/* Prose answer pane — the markdown counterpart of .code-block, so both columns of
+   the compare view sit on the same surface at the same height. */
+.answer-prose {
+  min-height: 120px;
+  margin: 4px 0 12px;
+  padding: 10px;
+  background: var(--code-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  line-height: 1.55;
+  overflow: auto;
+  box-shadow: inset var(--shadow-sm);
+}
 @media (max-width: 760px) {
   .compare { flex-direction: column; }
 }
@@ -920,6 +1081,7 @@ textarea { resize: vertical; }
   color: var(--code-text);
   padding: 1px 5px;
   border-radius: 4px;
+  font-family: var(--font-mono);
   font-size: 0.92em;
 }
 .markdown-body a { color: var(--primary); }
@@ -982,8 +1144,6 @@ textarea { resize: vertical; }
 .mastery-track { flex: 1; max-width: 200px; height: 8px; background: var(--glass-bg); border-radius: 4px; overflow: hidden; }
 .mastery-fill { display: block; height: 100%; background: var(--primary); border-radius: 4px; }
 /* Deck mastery as rings (rhymes with the dashboard hero). */
-.mastery-rings { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
-.mastery-ring-item { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 
 /* ---- Stats: retention chart (item 9: HTML axis labels, no stretched text) ---- */
 .ret-plot { position: relative; padding-left: 34px; }
@@ -1047,7 +1207,7 @@ body.studying #sidebar:hover { opacity: 1; }
   color: var(--code-text);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.5;
   padding: 6px 4px;

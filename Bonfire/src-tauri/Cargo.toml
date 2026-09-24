@@ -1,6 +1,6 @@
 [package]
 name = "bonfire"
-version = "0.1.0"
+version = "0.4.0"
 description = "Active-recall spaced-repetition study tool for code and beyond"
 authors = ["sundoesdev"]
 edition = "2021"

@@ -12,7 +12,6 @@ function buildItems(ctx) {
   add("Action", "Quick capture", () => ctx.openQuickCapture());
   add("Action", "Start study", () => ctx.startStudy());
   add("Action", "Daily study", () => ctx.quickStudy());
-  add("Action", "Drill weak spots", () => ctx.weakStudy());
 
   [
     ["dashboard", "Dashboard"],

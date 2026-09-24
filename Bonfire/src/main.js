@@ -2,6 +2,7 @@
 // renders the active view into #view. View modules export render(container, ctx, params).
 import * as api from "./api.js";
 import { DEFAULT_LANGUAGES, ALL_DECKS, presetConfig } from "./constants.js";
+import { todayStr, isDue } from "./dom.js";
 import { renderDashboard } from "./views/dashboard.js";
 import { renderLibrary } from "./views/library.js";
 import { renderStudy } from "./views/study.js";
@@ -16,9 +17,30 @@ import { openCommandPalette } from "./components/commandPalette.js";
 import { confirmDialog } from "./components/confirm.js";
 import { loadAppearance } from "./theme.js";
 import { checkForUpdate, applyUpdate } from "./update.js";
-import { syncNow } from "./sync.js";
+import { syncNow, isConfigured } from "./sync.js";
 
 const DECK_KEY = "current_deck";
+
+// Boot splash (#boot-overlay in index.html). Held for at least MIN so a fast or
+// sync-less start reads as deliberate rather than a flicker, and never longer than
+// MAX so an unreachable remote can't strand the user behind it.
+const BOOT_MIN_MS = 600;
+const BOOT_MAX_MS = 15000;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function bootStatus(text) {
+  const el = document.querySelector("#boot-status");
+  if (el) el.textContent = text;
+}
+
+function dismissBoot() {
+  const el = document.querySelector("#boot-overlay");
+  if (!el) return;
+  el.classList.add("leaving");
+  el.addEventListener("transitionend", () => el.remove(), { once: true });
+  setTimeout(() => el.remove(), 600); // fallback if the transition never fires
+}
 
 const state = {
   allShards: [], // every card, across all decks
@@ -50,10 +72,10 @@ let deckSwitcher;
 // Reload shards, decks, and custom languages from the backend, then scope the
 // view-facing `shards` array to the current deck.
 async function refreshShards() {
-  // Reconcile the auto Debt deck (overdue cards in / caught-up cards out) before
-  // reading, so it's accurate wherever the user looks. Cheap, set-based SQL.
+  // Reconcile the derived decks (Debt and Archived) before reading, so they're
+  // accurate wherever the user looks. Cheap, set-based SQL.
   try {
-    await api.syncDebtDeck();
+    await api.syncDerivedDecks();
   } catch (_e) {
     /* non-fatal — fall back to whatever's stored */
   }
@@ -126,6 +148,40 @@ async function setDeck(id) {
   await navigate(currentView());
 }
 
+// ---- Day rollover ----------------------------------------------------------
+// Data is otherwise only refreshed by navigate(), so an app left open overnight
+// keeps yesterday's due list until the user happens to click something. Watch the
+// local date and re-render once it turns over.
+const ROLLOVER_POLL_MS = 60_000;
+let lastSeenDay = todayStr();
+
+async function checkDayRollover() {
+  const today = todayStr();
+  if (today === lastSeenDay) return;
+  lastSeenDay = today;
+  // Never pull the ground out from under an in-progress session — its queue was
+  // built for the old day, and re-rendering would discard the card being answered.
+  // The next navigate() after the session ends picks the new day up anyway.
+  if (ctx.studyActive) return;
+  await navigate(currentView());
+  const due = state.allShards.filter(isDue).length;
+  showToast(due ? `New day — ${due} card${due === 1 ? "" : "s"} due` : "New day — nothing due yet");
+}
+
+// Both triggers matter: the interval covers an app sitting open and visible, and
+// the visibility/focus hooks catch a machine that was asleep across midnight and
+// would otherwise wait up to a minute after waking.
+function watchDayRollover() {
+  setInterval(() => {
+    checkDayRollover().catch(() => {});
+  }, ROLLOVER_POLL_MS);
+  const wake = () => {
+    if (document.visibilityState === "visible") checkDayRollover().catch(() => {});
+  };
+  document.addEventListener("visibilitychange", wake);
+  window.addEventListener("focus", wake);
+}
+
 function setActiveNav(view) {
   document.querySelectorAll("#sidebar nav button").forEach((b) => {
     b.classList.toggle("active", b.dataset.view === view);
@@ -172,8 +228,9 @@ const ctx = {
     }
     navigate("study", { quick: true, deckId });
   },
-  weakStudy: () => navigate("study", { weak: true }),
-  reviewCard: (id) => navigate("study", { single: id }),
+  // `reopen` is set only by the card modal's own Review button, which wants the
+  // modal back afterwards. From the Library / Dashboard / Debt list it must stay shut.
+  reviewCard: (id, opts = {}) => navigate("study", { single: id, reopen: !!opts.reopen }),
   // Study an explicit set of cards in one session (e.g. "Study all" from the
   // Card Debt list) — the queue is exactly these ids, no due/cap filtering.
   studyCards: (ids) => navigate("study", { cards: ids }),
@@ -183,6 +240,7 @@ const ctx = {
 };
 
 window.addEventListener("DOMContentLoaded", async () => {
+  const bootStartedAt = Date.now();
   viewEl = document.querySelector("#view");
   deckSwitcher = document.querySelector("#deck-switcher");
 
@@ -241,33 +299,47 @@ window.addEventListener("DOMContentLoaded", async () => {
     ctx.newShard();
   });
 
-  // Auto-updater (scaffold): no-op until the updater plugin is configured.
+  // Bring in the new day's cards without needing a click. See checkDayRollover.
+  watchDayRollover();
+
+  // Auto-updater: pulls GitHub main and rebuilds in the background. Never awaited —
+  // a rebuild takes minutes and must not hold up the boot splash or the UI.
   const updateBadge = document.querySelector("#update-badge");
   if (updateBadge) {
-    updateBadge.addEventListener("click", () => applyUpdate());
+    updateBadge.addEventListener("click", () => applyUpdate(ctx));
     checkForUpdate(ctx, updateBadge);
   }
 
   // Pull the vault on launch so this machine starts from wherever the last one
-  // left off. Deliberately not awaited: the UI is already usable, and a slow or
-  // unreachable remote must never delay startup. No-op unless sync is set up.
+  // left off. The boot splash covers this: the sync holds the single DB mutex, so
+  // nothing behind it can render usefully until it lands. No-op unless sync is set up.
   const syncBadge = document.querySelector("#sync-badge");
   if (syncBadge) {
     syncBadge.addEventListener("click", () => navigate("settings"));
   }
-  syncNow(ctx).then((summary) => {
-    // Only re-render if something actually arrived, so a routine no-op sync
-    // can't yank the view out from under the user.
-    if (summary && !summary.startsWith("Up to date") && !ctx.studyActive) {
+  let bootRendered = false;
+  const startupSync = (async () => {
+    if (!(await isConfigured(ctx))) return;
+    bootStatus("Syncing with remote…");
+    const summary = await syncNow(ctx);
+    // Only reached ahead of the first render when the splash timed out. Re-render
+    // if something actually arrived, so a routine no-op sync can't yank the view
+    // out from under the user — and never onto Study, whose session summary must
+    // survive a sync landing right after the session ended.
+    if (bootRendered && summary && !summary.startsWith("Up to date") && !ctx.studyActive && currentView() !== "study") {
       navigate(currentView());
     }
-  });
+  })();
 
   // Global shortcuts: Ctrl+P palette, Ctrl+N quick capture, Ctrl+K library, Ctrl+D study.
   window.addEventListener("keydown", async (e) => {
     if (!e.ctrlKey) return;
     const k = e.key.toLowerCase();
     if (!["p", "n", "k", "d"].includes(k)) return;
+    // Every one of these is also a vim binding (Ctrl-D half-page, Ctrl-N/Ctrl-P
+    // completion), so inside an editor the editor wins.
+    const t = e.target;
+    if (t && (t.closest?.(".CodeMirror") || t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
     e.preventDefault();
     // During a study session these shortcuts all "leave" — gate them (item 6).
     if (!(await guardStudy())) return;
@@ -277,5 +349,9 @@ window.addEventListener("DOMContentLoaded", async () => {
     else if (k === "d") ctx.quickStudy();
   });
 
+  await Promise.race([startupSync, sleep(BOOT_MAX_MS)]);
+  bootStatus("Ready");
+  bootRendered = true;
   navigate("dashboard");
+  setTimeout(dismissBoot, Math.max(0, BOOT_MIN_MS - (Date.now() - bootStartedAt)));
 });

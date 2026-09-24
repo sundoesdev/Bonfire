@@ -13,6 +13,11 @@ export const SYNC_EACH_CARD = "sync_each_card";
 // One sync at a time. Session-end and the app's own refresh can fire together,
 // and overlapping git invocations in the same repo would trip over each other.
 let inFlight = null;
+// A request that lands mid-flight (a session ending during the slow startup pull)
+// carries reviews the running sync never saw. Handing back `inFlight` would drop
+// them, so one follow-up run is queued instead — one, not a chain, because a
+// second follow-up would see the same already-published work.
+let queued = null;
 
 // Cached so the common "sync not set up" case costs nothing on every call.
 let configured = null;
@@ -49,7 +54,12 @@ export async function isConfigured(ctx) {
 // `silent` suppresses the success toast (used for automatic syncs).
 export async function syncNow(ctx, { silent = true } = {}) {
   if (!(await isConfigured(ctx))) return null;
-  if (inFlight) return inFlight;
+  if (inFlight) {
+    return (queued ||= inFlight.then(() => {
+      queued = null;
+      return syncNow(ctx, { silent });
+    }));
+  }
 
   badge("syncing");
   inFlight = (async () => {

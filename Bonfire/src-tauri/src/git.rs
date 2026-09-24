@@ -18,7 +18,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Run a git command in `dir`, returning stdout on success and stderr on failure.
-fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
+///
+/// Shared with `update.rs`, which drives the app's own source checkout with the
+/// same runner rather than re-deriving the error handling.
+pub fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     let out = Command::new("git")
         .current_dir(dir)
         .args(args)

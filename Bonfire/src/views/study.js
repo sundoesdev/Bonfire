@@ -1,7 +1,7 @@
 // Study: active-recall testing. A configurable, editable, due-first queue of cards;
 // each card shows a question, you type an answer, reveal + compare, then self-grade (SM-2).
-import { el, esc, langBadge, metaBadges, isDue, enableTab, todayStr } from "../dom.js";
-import { DIFFICULTIES, FAMILIARITY_ORDER, ALL_DECKS, getDifficulty, isFoundation, isRevealOnly, cmMode } from "../constants.js";
+import { el, esc, langBadge, metaBadges, isDue, enableTab, todayStr, dueLabel } from "../dom.js";
+import { DIFFICULTIES, FAMILIARITY_ORDER, ALL_DECKS, getDifficulty, isFoundation, isRevealOnly, cmMode, DEFAULT_TAB_SIZE, clampTabSize } from "../constants.js";
 import { highlightInto } from "../highlight.js";
 import { mdLite } from "../markdown.js";
 import { confirmDialog } from "../components/confirm.js";
@@ -9,6 +9,9 @@ import { syncNow, syncAfterCard } from "../sync.js";
 
 // Whether the CodeMirror answer editor starts in VIM mode (persisted `editor_vim`).
 let vimEnabled = false;
+
+// How far one Tab indents in the answer editor (persisted `editor_tab_size`).
+let tabSize = DEFAULT_TAB_SIZE;
 
 // Card ids referenced by any playbook — used to drop them from normal study when the
 // "exclude playbook cards" toggle is on. Set at the top of renderStudy each time.
@@ -78,6 +81,7 @@ export const DEFAULT_CONFIG = {
   includeTags: [], // card must have all of these
   excludeTags: [], // card must have none of these
   cram: false, // ignore due dates, draw from whole matching set
+  hints: false, // show the per-card Hints pane while studying
   shuffle: true, // randomize the queue each session (so quitting midway varies the set)
   excludePlaybook: false, // skip cards that belong to a playbook (studied via the playbook)
   showPreview: true, // quick-start lands on the editable preview first
@@ -202,27 +206,6 @@ function buildQueue(shards, cfg, progress) {
   return ordered.slice(0, queueCap(cfg, ordered.length));
 }
 
-// Weak-spot queue: ignores due dates and surfaces the cards you're struggling with
-// most — shakiest familiarity first, then lowest SM-2 ease, then hardest difficulty.
-function buildWeakQueue(shards, cfg) {
-  const matches = matchingCards(shards, cfg);
-  const famRank = (s) => {
-    const i = FAMILIARITY_ORDER.indexOf(s.familiarity);
-    return i === -1 ? 99 : i;
-  };
-  const ordered = [...matches].sort(
-    (a, b) =>
-      famRank(a) - famRank(b) ||
-      (a.reviewEase || 2.5) - (b.reviewEase || 2.5) ||
-      diffRank(a) - diffRank(b)
-  );
-  // Pick the weakest N by the ranking above, then (if shuffling) randomize just the
-  // presentation order of that selected set.
-  const picked = ordered.slice(0, Math.max(1, cfg.maxCards || ordered.length));
-  if (cfg.shuffle) shuffleInPlace(picked);
-  return picked;
-}
-
 // ---------- Shared config form (used by setup screen + Settings) ----------
 // Returns { node, collect } where collect() reads the current values into a config object.
 export function buildStudyConfigForm(ctx, cfg, opts = {}) {
@@ -303,6 +286,10 @@ export function buildStudyConfigForm(ctx, cfg, opts = {}) {
         <div style="margin-bottom:8px">
           <button type="button" class="btn btn-toggle ${cfg.cram ? "on" : ""}" id="c-cram">Cram mode</button>
           <div class="muted" style="margin-top:6px">Practice the whole set, ignoring due dates. Cram never changes a card's schedule, but still counts toward your heatmap and streak.</div>
+        </div>
+        <div style="margin-bottom:8px">
+          <button type="button" class="btn btn-toggle ${cfg.hints ? "on" : ""}" id="c-hints">Hints</button>
+          <div class="muted" style="margin-top:6px">Add a small notes pane beside each card while you study. Write down why you missed a card and it's waiting for you the next time that card comes up.</div>
         </div>
         <div style="margin-bottom:8px">
           <button type="button" class="btn btn-toggle ${cfg.shuffle ? "on" : ""}" id="c-shuffle">Shuffle order</button>
@@ -400,6 +387,7 @@ export function buildStudyConfigForm(ctx, cfg, opts = {}) {
     timeLimitMinutes: parseInt(timeInput.value, 10) || 0,
     maxCards: parseInt(maxInput.value, 10) || 0,
     cram: node.querySelector("#c-cram").classList.contains("on"),
+    hints: node.querySelector("#c-hints").classList.contains("on"),
     shuffle: node.querySelector("#c-shuffle").classList.contains("on"),
     excludePlaybook: node.querySelector("#c-exclude-pb").classList.contains("on"),
     showPreview: showPreviewToggle ? node.querySelector("#c-preview").classList.contains("on") : cfg.showPreview,
@@ -421,6 +409,7 @@ export async function renderStudy(container, ctx, params = {}) {
   playbookIds = ctx.state.playbookCardIds || new Set();
   try {
     vimEnabled = (await ctx.api.getSetting("editor_vim")) === "true";
+  tabSize = clampTabSize(parseInt(await ctx.api.getSetting("editor_tab_size"), 10));
   } catch (_e) {
     /* default off */
   }
@@ -436,7 +425,7 @@ export async function renderStudy(container, ctx, params = {}) {
       single: true,
       onDone: async () => {
         await ctx.navigate("dashboard");
-        ctx.openShard(shard.id);
+        if (params.reopen) ctx.openShard(shard.id);
       },
     });
     return;
@@ -453,18 +442,6 @@ export async function renderStudy(container, ctx, params = {}) {
       return;
     }
     runSession(container, ctx, { ...cfg, sessionMode: "count", cram: false }, queue, { pool: queue });
-    return;
-  }
-
-  // Weak-spot drill: practice the shakiest cards regardless of due date.
-  if (params.weak) {
-    const queue = buildWeakQueue(ctx.state.allShards, cfg);
-    if (!queue.length) {
-      renderSetup(container, ctx, cfg, "No cards to drill yet.");
-      return;
-    }
-    if (cfg.showPreview) renderPreview(container, ctx, cfg, queue, ctx.state.allShards);
-    else runSession(container, ctx, cfg, queue, { pool: ctx.state.allShards });
     return;
   }
 
@@ -529,7 +506,6 @@ function renderSetup(container, ctx, cfg, notice) {
           <div class="preview-line"><span>Difficulty</span><b id="prev-diff"></b></div>
           <button class="btn btn-primary full-width" id="build" style="margin-top:14px"><i class="ti ti-player-play"></i> Build queue</button>
           <button class="btn btn-tool full-width" id="daily" style="margin-top:8px"><i class="ti ti-bolt"></i> Daily (Ctrl+D)</button>
-          <button class="btn btn-tool full-width" id="weak" style="margin-top:8px">Drill weak spots</button>
         </div>
       </div>
     </div>
@@ -583,17 +559,6 @@ function renderSetup(container, ctx, cfg, notice) {
     .catch(() => {});
 
   root.querySelector("#daily").addEventListener("click", () => ctx.quickStudy());
-
-  root.querySelector("#weak").addEventListener("click", () => {
-    const next = form.collect();
-    const pool = studyPool();
-    const queue = buildWeakQueue(pool, next);
-    if (!queue.length) {
-      renderSetup(container, ctx, next, "No cards to drill — loosen the filters.");
-      return;
-    }
-    renderPreview(container, ctx, next, queue, pool);
-  });
 
   root.querySelector("#build").addEventListener("click", async () => {
     const next = form.collect();
@@ -746,8 +711,11 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
     sessionId: `sess-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     cardShownMs: Date.now(),
     stats: { reviewed: 0, forgot: 0, advanced: 0 },
-    // Removes the active 1/2/3/4 grade-key listener (set by showReveal); null when none.
+    // Removes the active grade-key listener (set by showReveal); null when none.
     cleanupKeys: null,
+    // Persists an edited hint before the current card goes away; null when the
+    // Hints pane is off or already flushed (set by card()).
+    flushHint: null,
   };
 
   function fmt(ms) {
@@ -776,8 +744,12 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
 
   // End the session for good: clear the nav lock and show the summary screen.
   function finish() {
-    // The nav-lock path reaches finish() without going through render(), so tear
-    // down any active grade-key listener here too (item 4).
+    // The nav-lock path reaches finish() without going through render(), so save a
+    // pending hint and tear down any active grade-key listener here too (item 4).
+    if (session.flushHint) {
+      session.flushHint();
+      session.flushHint = null;
+    }
     if (session.cleanupKeys) {
       session.cleanupKeys();
       session.cleanupKeys = null;
@@ -852,8 +824,13 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
   }
 
   function render() {
-    // Tear down the previous card's grade-key listener (item 4) before drawing the
-    // next card, so 1/2/3/4 never leak onto a card that hasn't been revealed yet.
+    // Save any hint edit and tear down the previous card's grade-key listener
+    // (item 4) before drawing the next card, so the keys never leak onto a card
+    // that hasn't been revealed yet.
+    if (session.flushHint) {
+      session.flushHint();
+      session.flushHint = null;
+    }
     if (session.cleanupKeys) {
       session.cleanupKeys();
       session.cleanupKeys = null;
@@ -892,6 +869,8 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       used = true;
       const wasNew = isNewCard(s);
       const durationMs = Math.max(0, Date.now() - (session.cardShownMs || Date.now()));
+      // Before the review write, never after — see the note where flushHint is set.
+      if (session.flushHint) session.flushHint();
 
       // Persist in the background. The UI advance below must NOT be gated on this:
       // a slow / hung / failed submitReview must never freeze the rating buttons.
@@ -927,13 +906,38 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
     const type = s.cardType || "basic";
     const isCloze = type === "cloze" && hasClozeMarkers(s.code);
     const isReverse = type === "reverse";
-    // Non-code decks (prose/vocab) render the answer as markdown, not highlighted code.
-    const highlight = ctx.currentPreset().highlight;
+    // Highlighting follows the CARD, not the sidebar deck filter: a C card is still
+    // code when the Library happens to be filtered to a prose deck. Only a card with
+    // no language at all falls back to the deck preset (prose/vocab render as markdown).
+    const highlight = !!s.language || ctx.currentPreset().highlight;
 
     // Reverse cards hide the title (it's the thing to recall); other types show it.
     const headerHtml = isReverse
       ? `<div class="title-big">Recall the title / term</div>`
       : `<div class="title-big">${esc(s.title) || "(untitled)"}</div>`;
+
+    const reviewCardHtml = `
+        <div class="review-card">
+          <div class="row">${langBadge(s.language)} ${metaBadges(s.tags)} ${cardTypeBadge(type)}</div>
+          ${headerHtml}
+          ${s.prompt ? `<div class="desc markdown-body" style="margin-bottom:6px">${mdLite(s.prompt)}</div>` : ""}
+          <div id="question-extra"></div>
+          <hr class="sep" />
+          <div id="answer-area"></div>
+          <div id="controls"></div>
+        </div>`;
+    // Hints (opt-in, Settings → Study): a notes pane beside the card, readable from
+    // the question phase — the whole point is to see it *before* you answer. Only
+    // wrapped when it's on, so the default layout is untouched.
+    const bodyHtml = cfg.hints
+      ? `<div class="study-row">${reviewCardHtml}
+        <aside class="hint-pane">
+          <div class="section-title">Hints</div>
+          <textarea id="card-hint" class="hint-input" placeholder="e.g. you need &amp; to take the address">${esc(s.hint || "")}</textarea>
+          <div class="hint-help">Why you missed this last time — not the answer itself.</div>
+        </aside>
+      </div>`
+      : reviewCardHtml;
 
     const root = el(`
       <div>
@@ -943,16 +947,8 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
           <span id="timer" class="timer">${session.limitMs ? fmt(session.limitMs) : ""}</span>
         </div>
         <div id="time-banner" class="time-banner" style="display:none">⏰ Time's up — wrap up when you're ready.</div>
-        <div class="review-card">
-          <div class="row">${langBadge(s.language)} ${metaBadges(s.tags)} ${cardTypeBadge(type)}</div>
-          ${headerHtml}
-          ${s.prompt ? `<div class="desc markdown-body" style="margin-bottom:6px">${mdLite(s.prompt)}</div>` : ""}
-          <div id="question-extra"></div>
-          <hr class="sep" />
-          <div id="answer-area"></div>
-          <div id="controls"></div>
-        </div>
-        <div class="row" style="max-width:760px;margin:0 auto;gap:8px">
+        ${bodyHtml}
+        <div class="row study-controls">
           <button class="btn btn-tool" id="skip">Skip</button>
           <button class="btn btn-tool" id="end">End session</button>
           <div class="spacer"></div>
@@ -969,6 +965,24 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
 
     const answerArea = root.querySelector("#answer-area");
     const controls = root.querySelector("#controls");
+
+    // Persist an edited hint when the card goes away (graded, skipped, or the
+    // session ends). Writes only the hint column via setShardHint — a whole-shard
+    // save from here would push this stale copy over the schedule submitReview
+    // just wrote. Nulled by render()/finish() after firing.
+    const hintInput = root.querySelector("#card-hint");
+    if (hintInput) {
+      let savedHint = s.hint || "";
+      session.flushHint = () => {
+        if (hintInput.value === savedHint) return;
+        savedHint = hintInput.value;
+        s.hint = savedHint; // keep the in-memory card in step for this session
+        ctx.api.setShardHint(s.id, savedHint).catch(() => {
+          /* a lost hint must never interrupt studying */
+        });
+      };
+      hintInput.addEventListener("blur", () => session.flushHint && session.flushHint());
+    }
 
     // Question content shown before answering: cloze blanks, or (reverse) the answer side.
     const questionExtra = root.querySelector("#question-extra");
@@ -1031,16 +1045,38 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
         highlightInto(answerArea.querySelector("#answer"), s.code, s.language);
       }
 
+      const RATING_KEYS = ["forgot", "hard", "good", "easy"];
       controls.innerHTML = `
         <div class="muted" style="margin-top:12px">How well did you recall it? <span class="muted-2">(keys 1–4)</span></div>
         <div class="rating">
-          <button class="forgot" data-r="forgot"><span class="rating-key">1</span> Forgot</button>
-          <button class="hard" data-r="hard"><span class="rating-key">2</span> Hard</button>
-          <button class="good" data-r="good"><span class="rating-key">3</span> Good</button>
-          <button class="easy" data-r="easy"><span class="rating-key">4</span> Easy</button>
+          ${RATING_KEYS.map(
+            (r, i) => `<button class="${r}" data-r="${r}">
+              <span class="rating-line"><span class="rating-key">${i + 1}</span> ${r[0].toUpperCase() + r.slice(1)}</span>
+              <span class="rating-when" data-when="${r}">${cram ? "practice only" : "&nbsp;"}</span>
+            </button>`
+          ).join("")}
         </div>
       `;
-      // Grade via click OR keys 1/2/3/4 (left→right). The keys are wired ONLY here,
+
+      // Show where each grade actually lands. The backend dry-runs the same
+      // scheduler submitReview uses, so these labels cannot drift from the result.
+      // Cram deliberately skips scheduling, so there is nothing to promise there.
+      if (!cram) {
+        (async () => {
+          try {
+            const preview = await ctx.api.previewReview(s.id);
+            // The card may have moved on while this was in flight.
+            if (!document.body.contains(controls)) return;
+            for (const g of preview) {
+              const slot = controls.querySelector(`[data-when="${g.rating}"]`);
+              if (slot) slot.textContent = dueLabel(g.next);
+            }
+          } catch (_e) {
+            controls.querySelectorAll(".rating-when").forEach((n) => (n.textContent = ""));
+          }
+        })();
+      }
+      // Grade via click OR keys 1–4 (left→right). The keys are wired ONLY here,
       // after the answer is revealed — so typing 1234 into the answer never grades.
       // A single `graded` flag shared by both paths prevents a click+key double-fire.
       let graded = false;
@@ -1058,6 +1094,13 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       );
       const KEY_RATINGS = { 1: "forgot", 2: "hard", 3: "good", 4: "easy" };
       function onGradeKey(e) {
+        // A single-card review has no nav lock, so the user can leave mid-reveal and
+        // strand this listener — grading a card that is no longer on screen. If the
+        // controls are gone, so are we.
+        if (!document.body.contains(controls)) {
+          document.removeEventListener("keydown", onGradeKey);
+          return;
+        }
         const rating = KEY_RATINGS[e.key];
         if (!rating) return;
         // Defensive: ignore if focus is in an editable field (the answer editor is
@@ -1087,7 +1130,8 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       answerArea.innerHTML = `
         ${useCM ? `<label class="editor-vim-toggle"><input type="checkbox" id="vim-toggle" ${vimEnabled ? "checked" : ""}/> <span>VIM mode</span></label>` : ""}
         <textarea class="code-editor" id="type-answer" spellcheck="false" placeholder="${esc(ph)}"></textarea>`;
-      controls.innerHTML = '<button class="btn btn-primary full-width" id="submit">Submit <span class="kbd">Ctrl + Enter</span></button>';
+      controls.innerHTML =
+        '<div class="controls-end"><button class="btn btn-primary btn-submit" id="submit">Submit <span class="kbd">Ctrl + Enter</span></button></div>';
       const ta = answerArea.querySelector("#type-answer");
       const getValue = () => (cm ? cm.getValue() : ta.value);
       const submit = () => showReveal(getValue());
@@ -1099,7 +1143,17 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
           viewportMargin: Infinity,
           placeholder: ph,
           keyMap: vimEnabled ? "vim" : "default",
-          extraKeys: { "Ctrl-Enter": submit },
+          // One setting drives both directions and VIM's << / >>, which all read
+          // indentUnit. indentWithTabs stays off so the width is what you asked for
+          // rather than whatever renders a tab character.
+          indentUnit: tabSize,
+          tabSize,
+          indentWithTabs: false,
+          extraKeys: {
+            "Ctrl-Enter": submit,
+            Tab: (editor) => editor.execCommand("indentMore"),
+            "Shift-Tab": (editor) => editor.execCommand("indentLess"),
+          },
         });
         const vimToggle = answerArea.querySelector("#vim-toggle");
         vimToggle.addEventListener("change", async () => {
@@ -1114,7 +1168,7 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
         });
         setTimeout(() => cm.focus(), 0);
       } else {
-        enableTab(ta);
+        enableTab(ta, tabSize);
         ta.addEventListener("keydown", (e) => {
           if (e.ctrlKey && e.key === "Enter") {
             e.preventDefault();

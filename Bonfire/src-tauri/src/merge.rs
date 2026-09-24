@@ -67,10 +67,12 @@ impl Record for Deck {
         &self.modified_at
     }
     fn is_scaffolding(&self) -> bool {
-        // The Default and Debt decks are seeded by db::migrate() on every device,
-        // each with its own timestamps. Without this, connecting a second device
-        // would report two conflicts on its very first sync, every time.
-        self.id == crate::db::DEFAULT_DECK_ID || self.id == crate::db::DEBT_DECK_ID
+        // The Default, Debt and Archived decks are seeded by db::migrate() on every
+        // device, each with its own timestamps. Without this, connecting a second
+        // device would report a conflict per built-in deck on its very first sync,
+        // every time.
+        self.id == crate::db::DEFAULT_DECK_ID
+            || crate::db::DERIVED_DECK_IDS.contains(&self.id.as_str())
     }
 }
 
