@@ -2,6 +2,7 @@
 // renders the active view into #view. View modules export render(container, ctx, params).
 import * as api from "./api.js";
 import { DEFAULT_LANGUAGES, ALL_DECKS, presetConfig } from "./constants.js";
+import { todayStr, isDue } from "./dom.js";
 import { renderDashboard } from "./views/dashboard.js";
 import { renderLibrary } from "./views/library.js";
 import { renderStudy } from "./views/study.js";
@@ -147,6 +148,40 @@ async function setDeck(id) {
   await navigate(currentView());
 }
 
+// ---- Day rollover ----------------------------------------------------------
+// Data is otherwise only refreshed by navigate(), so an app left open overnight
+// keeps yesterday's due list until the user happens to click something. Watch the
+// local date and re-render once it turns over.
+const ROLLOVER_POLL_MS = 60_000;
+let lastSeenDay = todayStr();
+
+async function checkDayRollover() {
+  const today = todayStr();
+  if (today === lastSeenDay) return;
+  lastSeenDay = today;
+  // Never pull the ground out from under an in-progress session — its queue was
+  // built for the old day, and re-rendering would discard the card being answered.
+  // The next navigate() after the session ends picks the new day up anyway.
+  if (ctx.studyActive) return;
+  await navigate(currentView());
+  const due = state.allShards.filter(isDue).length;
+  showToast(due ? `New day — ${due} card${due === 1 ? "" : "s"} due` : "New day — nothing due yet");
+}
+
+// Both triggers matter: the interval covers an app sitting open and visible, and
+// the visibility/focus hooks catch a machine that was asleep across midnight and
+// would otherwise wait up to a minute after waking.
+function watchDayRollover() {
+  setInterval(() => {
+    checkDayRollover().catch(() => {});
+  }, ROLLOVER_POLL_MS);
+  const wake = () => {
+    if (document.visibilityState === "visible") checkDayRollover().catch(() => {});
+  };
+  document.addEventListener("visibilitychange", wake);
+  window.addEventListener("focus", wake);
+}
+
 function setActiveNav(view) {
   document.querySelectorAll("#sidebar nav button").forEach((b) => {
     b.classList.toggle("active", b.dataset.view === view);
@@ -264,6 +299,9 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (!(await guardStudy())) return;
     ctx.newShard();
   });
+
+  // Bring in the new day's cards without needing a click. See checkDayRollover.
+  watchDayRollover();
 
   // Auto-updater: pulls GitHub main and rebuilds in the background. Never awaited —
   // a rebuild takes minutes and must not hold up the boot splash or the UI.
