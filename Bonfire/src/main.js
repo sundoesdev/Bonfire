@@ -228,7 +228,6 @@ const ctx = {
     }
     navigate("study", { quick: true, deckId });
   },
-  weakStudy: () => navigate("study", { weak: true }),
   // `reopen` is set only by the card modal's own Review button, which wants the
   // modal back afterwards. From the Library / Dashboard / Debt list it must stay shut.
   reviewCard: (id, opts = {}) => navigate("study", { single: id, reopen: !!opts.reopen }),

@@ -164,6 +164,12 @@ fn sync_derived_decks(state: State<AppState>) -> Result<(), String> {
     with_conn(&state, |c| db::sync_derived_decks(c))
 }
 
+/// Star or unstar cards. Narrow on purpose — see `db::set_shard_hint`.
+#[tauri::command]
+fn set_favorite(state: State<AppState>, ids: Vec<String>, favorite: bool) -> Result<usize, String> {
+    with_conn(&state, |c| db::set_favorite(c, &ids, favorite))
+}
+
 /// Take cards in or out of the review rotation. Archived cards leave the study
 /// queue and the Debt deck and land in Archived, keeping every real deck they were
 /// already in. Narrow on purpose — see `db::set_review_enabled`.
@@ -482,6 +488,12 @@ fn review_history(state: State<AppState>) -> Result<Vec<DayCount>, String> {
     with_conn(&state, |c| db::review_history(c))
 }
 
+/// Lifetime per-card review totals, for the stats page.
+#[tauri::command]
+fn card_stats(state: State<AppState>) -> Result<Vec<models::CardStat>, String> {
+    with_conn(&state, |c| db::card_stats(c))
+}
+
 /// Rich per-day study detail (count, time, sessions, per-deck) for the heatmap tooltip.
 #[tauri::command]
 fn study_days(state: State<AppState>) -> Result<Vec<DayDetail>, String> {
@@ -649,11 +661,13 @@ pub fn run() {
             playbook_card_ids,
             sync_derived_decks,
             set_review_enabled,
+            set_favorite,
             set_shard_hint,
             submit_review,
             preview_review,
             review_history,
             study_days,
+            card_stats,
             rename_tag,
             delete_tag,
             get_setting,

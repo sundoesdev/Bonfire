@@ -1,5 +1,5 @@
 use crate::models::{
-    DayCount, DayDetail, DeckCount, Deck, Playbook, PlaybookNode, ReviewLogEntry, Shard,
+    CardStat, DayCount, DayDetail, DeckCount, Deck, Playbook, PlaybookNode, ReviewLogEntry, Shard,
     SyncConflict, VaultExport,
 };
 use rusqlite::{params, Connection, Result};
@@ -155,6 +155,8 @@ fn migrate(conn: &Connection) -> Result<()> {
 
     // Per-card study hint (the "why did I miss this last time" note).
     add_shard_column(conn, "hint", "hint TEXT NOT NULL DEFAULT ''")?;
+    // Starred cards, surfaced on the stats page.
+    add_shard_column(conn, "favorite", "favorite INTEGER NOT NULL DEFAULT 0")?;
 
     // review_log timing columns (added after the table first shipped).
     add_column(conn, "review_log", "duration_ms", "duration_ms INTEGER NOT NULL DEFAULT 0")?;
@@ -403,6 +405,7 @@ fn row_to_shard(row: &rusqlite::Row) -> Result<Shard> {
         code: row.get("code")?,
         description: row.get("description")?,
         hint: row.get("hint")?,
+        favorite: row.get::<_, i64>("favorite")? != 0,
         deck_id: row.get("deck_id")?,
         deck_ids: Vec::new(), // populated separately from card_decks
         card_type: row.get("card_type")?,
@@ -490,6 +493,19 @@ pub fn sync_derived_decks(conn: &Connection) -> Result<()> {
         params![ARCHIVE_DECK_ID],
     )?;
     Ok(())
+}
+
+/// Star or unstar cards. Narrow like `set_shard_hint` — see that function.
+pub fn set_favorite(conn: &Connection, ids: &[String], favorite: bool) -> Result<usize> {
+    let mut n = 0;
+    let now = now_iso();
+    for id in ids {
+        n += conn.execute(
+            "UPDATE shards SET favorite = ?2, modified_at = ?3 WHERE id = ?1",
+            params![id, favorite as i64, now],
+        )?;
+    }
+    Ok(n)
 }
 
 /// Take cards in or out of the review rotation.
@@ -583,20 +599,22 @@ fn save_shard_row(conn: &Connection, s: &Shard) -> Result<()> {
         "INSERT INTO shards (id, title, language, prompt, code, description, deck_id, card_type, tags, category,
             familiarity, source, related_ids, created_at, modified_at, last_reviewed,
             review_enabled, review_interval, review_reps, review_ease, review_next,
-            fsrs_stability, fsrs_difficulty, fsrs_state, lapses, media, hint)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27)
+            fsrs_stability, fsrs_difficulty, fsrs_state, lapses, media, hint, favorite)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28)
          ON CONFLICT(id) DO UPDATE SET
             title=?2, language=?3, prompt=?4, code=?5, description=?6, deck_id=?7, card_type=?8, tags=?9, category=?10,
             familiarity=?11, source=?12, related_ids=?13, created_at=?14, modified_at=?15,
             last_reviewed=?16, review_enabled=?17, review_interval=?18, review_reps=?19,
             review_ease=?20, review_next=?21,
-            fsrs_stability=?22, fsrs_difficulty=?23, fsrs_state=?24, lapses=?25, media=?26, hint=?27",
+            fsrs_stability=?22, fsrs_difficulty=?23, fsrs_state=?24, lapses=?25, media=?26, hint=?27,
+            favorite=?28",
         params![
             s.id, s.title, s.language, s.prompt, s.code, s.description, s.deck_id, s.card_type, tags, s.category,
             s.familiarity, s.source, related, s.created_at, s.modified_at, s.last_reviewed,
             s.review_enabled as i64, s.review_interval, s.review_repetitions, s.review_ease,
             s.review_next,
             s.fsrs_stability, s.fsrs_difficulty, s.fsrs_state, s.lapses, media, s.hint,
+            s.favorite as i64,
         ],
     )?;
 
@@ -875,18 +893,48 @@ pub fn log_review(
     Ok(())
 }
 
+/// Longest a single review may contribute to a study-time total, in milliseconds.
+///
+/// A review's duration is wall-clock time between the card appearing and being
+/// graded, so it also counts the app being left open on a card. One real day in
+/// this vault logged 19.6 hours across 16 reviews. Capping keeps the total an
+/// honest measure of time studied rather than time the window was up.
+pub const MAX_REVIEW_MS: i64 = 600_000; // 10 minutes
+
+/// Per-card review totals for the stats page. Time is capped per review — see
+/// [`MAX_REVIEW_MS`].
+pub fn card_stats(conn: &Connection) -> Result<Vec<CardStat>> {
+    let mut stmt = conn.prepare(
+        "SELECT shard_id,
+                COUNT(*) AS n,
+                COALESCE(SUM(MIN(duration_ms, ?1)), 0) AS dur,
+                MAX(ts) AS last_ts
+         FROM review_log WHERE shard_id <> ''
+         GROUP BY shard_id ORDER BY n DESC, last_ts DESC",
+    )?;
+    let rows = stmt.query_map(params![MAX_REVIEW_MS], |r| {
+        Ok(CardStat {
+            shard_id: r.get("shard_id")?,
+            reviews: r.get("n")?,
+            total_ms: r.get("dur")?,
+            last_ts: r.get::<_, Option<String>>("last_ts")?.unwrap_or_default(),
+        })
+    })?;
+    rows.collect()
+}
+
 /// Rich per-day study detail for the heatmap tooltip: card count, total time,
 /// distinct session count, and a per-deck breakdown.
 pub fn study_days(conn: &Connection) -> Result<Vec<DayDetail>> {
     let mut stmt = conn.prepare(
         "SELECT day,
                 COUNT(*) AS n,
-                COALESCE(SUM(duration_ms), 0) AS dur,
+                COALESCE(SUM(MIN(duration_ms, ?1)), 0) AS dur,
                 COUNT(DISTINCT NULLIF(session_id, '')) AS sess
          FROM review_log WHERE day <> '' GROUP BY day ORDER BY day",
     )?;
     let mut days: Vec<DayDetail> = stmt
-        .query_map([], |r| {
+        .query_map(params![MAX_REVIEW_MS], |r| {
             Ok(DayDetail {
                 day: r.get("day")?,
                 count: r.get("n")?,

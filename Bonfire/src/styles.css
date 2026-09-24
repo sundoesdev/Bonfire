@@ -546,6 +546,20 @@ textarea { resize: vertical; }
 }
 /* An archived card is set aside, not flagged — quieter than a normal pill. */
 .pill-muted { background: transparent; border: 0.5px solid var(--border-strong); color: var(--muted-2); }
+/* Favourite star: a quiet outline until it's on, then the accent. */
+.cm-fav { min-width: 38px; font-size: 15px; line-height: 1; padding: 6px 10px; }
+.cm-fav.on { color: var(--accent); border-color: var(--accent); }
+.fav-star { color: var(--accent); font-size: 12px; }
+/* "Most studied" rows: a rank, then the card, then what it cost you. */
+.studied-row { cursor: pointer; }
+.studied-rank {
+  min-width: 22px; text-align: right; font-family: var(--font-mono);
+  font-size: 11px; color: var(--muted-2);
+}
+.studied-rank.top { color: var(--accent); font-weight: 600; }
+/* H:MM:SS needs to fit without shrinking the card, so it sits a notch smaller
+   than the other stat numbers and uses tabular figures. */
+.stat-time { font-size: 26px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .pill-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--dot, var(--text-3)); filter: saturate(0.7); flex-shrink: 0; }
 /* Right-aligned muted row meta ("Lang · difficulty") used on the dashboard. */
 .row-meta { margin-left: auto; color: var(--text-3); font-size: 11px; white-space: nowrap; }
@@ -1126,8 +1140,6 @@ textarea { resize: vertical; }
 .mastery-track { flex: 1; max-width: 200px; height: 8px; background: var(--glass-bg); border-radius: 4px; overflow: hidden; }
 .mastery-fill { display: block; height: 100%; background: var(--primary); border-radius: 4px; }
 /* Deck mastery as rings (rhymes with the dashboard hero). */
-.mastery-rings { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
-.mastery-ring-item { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 
 /* ---- Stats: retention chart (item 9: HTML axis labels, no stretched text) ---- */
 .ret-plot { position: relative; padding-left: 34px; }

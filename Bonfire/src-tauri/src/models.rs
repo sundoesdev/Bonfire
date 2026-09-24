@@ -72,6 +72,8 @@ pub struct Shard {
     /// ISO-8601 timestamp; empty string means "never reviewed".
     pub last_reviewed: String,
     pub review_enabled: bool,
+    /// Starred by the user; surfaced on the stats page.
+    pub favorite: bool,
     pub review_interval: i64,
     pub review_repetitions: i64,
     pub review_ease: f64,
@@ -111,6 +113,7 @@ impl Default for Shard {
             modified_at: String::new(),
             last_reviewed: String::new(),
             review_enabled: false,
+            favorite: false,
             review_interval: 0,
             review_repetitions: 0,
             review_ease: 2.5,
@@ -247,6 +250,17 @@ pub struct DayDetail {
     /// Number of distinct study sessions that day.
     pub sessions: i64,
     pub deck_counts: Vec<DeckCount>,
+}
+
+/// Lifetime totals for one card, for the stats page's "most studied" list.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CardStat {
+    pub shard_id: String,
+    pub reviews: i64,
+    /// Summed review time, capped per review — see `db::MAX_REVIEW_MS`.
+    pub total_ms: i64,
+    pub last_ts: String,
 }
 
 /// Shape of the JSON export file: all shards, decks, custom languages, and the

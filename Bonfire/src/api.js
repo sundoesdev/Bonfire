@@ -21,6 +21,7 @@ export const syncDerivedDecks = () => invoke("sync_derived_decks");
 // Takes cards in/out of the review rotation. Narrow like setShardHint — never use
 // saveShard for this, it would push a stale schedule over a concurrent review.
 export const setReviewEnabled = (ids, enabled) => invoke("set_review_enabled", { ids, enabled });
+export const setFavorite = (ids, favorite) => invoke("set_favorite", { ids, favorite });
 // Playbooks: ordered, self-authored tutorials over existing cards (see playbooks.js).
 export const listPlaybooks = () => invoke("list_playbooks");
 export const getPlaybook = (id) => invoke("get_playbook", { id });
@@ -38,6 +39,7 @@ export const submitReview = (id, rating, durationMs, sessionId, cram = false) =>
 export const previewReview = (id) => invoke("preview_review", { id });
 export const reviewHistory = () => invoke("review_history");
 export const studyDays = () => invoke("study_days");
+export const cardStats = () => invoke("card_stats");
 export const renameTag = (oldName, newName) => invoke("rename_tag", { old: oldName, new: newName });
 export const deleteTag = (tag) => invoke("delete_tag", { tag });
 export const getSetting = (key) => invoke("get_setting", { key });

@@ -206,27 +206,6 @@ function buildQueue(shards, cfg, progress) {
   return ordered.slice(0, queueCap(cfg, ordered.length));
 }
 
-// Weak-spot queue: ignores due dates and surfaces the cards you're struggling with
-// most — shakiest familiarity first, then lowest SM-2 ease, then hardest difficulty.
-function buildWeakQueue(shards, cfg) {
-  const matches = matchingCards(shards, cfg);
-  const famRank = (s) => {
-    const i = FAMILIARITY_ORDER.indexOf(s.familiarity);
-    return i === -1 ? 99 : i;
-  };
-  const ordered = [...matches].sort(
-    (a, b) =>
-      famRank(a) - famRank(b) ||
-      (a.reviewEase || 2.5) - (b.reviewEase || 2.5) ||
-      diffRank(a) - diffRank(b)
-  );
-  // Pick the weakest N by the ranking above, then (if shuffling) randomize just the
-  // presentation order of that selected set.
-  const picked = ordered.slice(0, Math.max(1, cfg.maxCards || ordered.length));
-  if (cfg.shuffle) shuffleInPlace(picked);
-  return picked;
-}
-
 // ---------- Shared config form (used by setup screen + Settings) ----------
 // Returns { node, collect } where collect() reads the current values into a config object.
 export function buildStudyConfigForm(ctx, cfg, opts = {}) {
@@ -466,18 +445,6 @@ export async function renderStudy(container, ctx, params = {}) {
     return;
   }
 
-  // Weak-spot drill: practice the shakiest cards regardless of due date.
-  if (params.weak) {
-    const queue = buildWeakQueue(ctx.state.allShards, cfg);
-    if (!queue.length) {
-      renderSetup(container, ctx, cfg, "No cards to drill yet.");
-      return;
-    }
-    if (cfg.showPreview) renderPreview(container, ctx, cfg, queue, ctx.state.allShards);
-    else runSession(container, ctx, cfg, queue, { pool: ctx.state.allShards });
-    return;
-  }
-
   // Quick-start (Ctrl+D): focus the daily/active deck's due cards first, holding the
   // rest of the library's due cards for the "continue to the rest" prompt at the end.
   if (params.quick) {
@@ -539,7 +506,6 @@ function renderSetup(container, ctx, cfg, notice) {
           <div class="preview-line"><span>Difficulty</span><b id="prev-diff"></b></div>
           <button class="btn btn-primary full-width" id="build" style="margin-top:14px"><i class="ti ti-player-play"></i> Build queue</button>
           <button class="btn btn-tool full-width" id="daily" style="margin-top:8px"><i class="ti ti-bolt"></i> Daily (Ctrl+D)</button>
-          <button class="btn btn-tool full-width" id="weak" style="margin-top:8px">Drill weak spots</button>
         </div>
       </div>
     </div>
@@ -593,17 +559,6 @@ function renderSetup(container, ctx, cfg, notice) {
     .catch(() => {});
 
   root.querySelector("#daily").addEventListener("click", () => ctx.quickStudy());
-
-  root.querySelector("#weak").addEventListener("click", () => {
-    const next = form.collect();
-    const pool = studyPool();
-    const queue = buildWeakQueue(pool, next);
-    if (!queue.length) {
-      renderSetup(container, ctx, next, "No cards to drill — loosen the filters.");
-      return;
-    }
-    renderPreview(container, ctx, next, queue, pool);
-  });
 
   root.querySelector("#build").addEventListener("click", async () => {
     const next = form.collect();

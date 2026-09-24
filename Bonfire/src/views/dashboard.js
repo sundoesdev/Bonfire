@@ -1,9 +1,7 @@
 // Dashboard: stats, language breakdown, due-for-review, recently added.
-import { el, esc, langDot, isDue, progressRing } from "../dom.js";
+import { el, esc, langDot, isDue, progressRing, todayStr } from "../dom.js";
 import { langColor, getDifficulty } from "../constants.js";
 
-// Familiarity → mastery rank (mirrors stats.js so the hero ring matches Deck mastery).
-const FAM_RANK = { shaky: 0, fresh: 1, solid: 2, mastered: 3 };
 import { exportVault, importVault } from "../data.js";
 import {
   bulkDelete,
@@ -28,11 +26,6 @@ export async function renderDashboard(container, ctx) {
 
   const recent = shards.slice(0, 10); // already modified_at DESC from backend
 
-  // Current-deck mastery (avg familiarity rank) for the hero ring.
-  const masteryPct = shards.length
-    ? Math.round((shards.reduce((a, s) => a + (FAM_RANK[s.familiarity] ?? 1) / 3, 0) / shards.length) * 100)
-    : 0;
-
   // Day streak + total reviews from the review log (best-effort; empty on error).
   let dayCount = new Map();
   try {
@@ -43,6 +36,12 @@ export async function renderDashboard(container, ctx) {
   }
   const streak = currentStreak(dayCount);
   const totalReviews = [...dayCount.values()].reduce((a, b) => a + b, 0);
+  // The hero ring shows today's progress: reviews done against what was waiting.
+  // It used to average the `familiarity` dropdown, which no study action writes —
+  // so it read 33% forever no matter how much you studied.
+  const doneToday = dayCount.get(todayStr()) || 0;
+  const targetToday = doneToday + due.length;
+  const dayPct = targetToday ? Math.round((doneToday / targetToday) * 100) : 100;
   const greeting = timeGreeting();
   const sub = due.length
     ? `${due.length} shard${due.length === 1 ? "" : "s"} due — a short session keeps the embers warm.`
@@ -70,13 +69,15 @@ export async function renderDashboard(container, ctx) {
       </div>
 
       <div class="hero">
-        ${progressRing(masteryPct, "mastery")}
+        ${progressRing(dayPct, "today")}
         <div class="hero-txt">
           <h3>Tend the fire</h3>
-          <p>Your deck is ${masteryPct}% mastered. ${
+          <p>${
             due.length
-              ? `${due.length} shard${due.length === 1 ? "" : "s"} ${due.length === 1 ? "is" : "are"} ready — a`
-              : "A"
+              ? `${doneToday} of ${targetToday} done today — ${due.length} shard${due.length === 1 ? "" : "s"} still ready. A`
+              : doneToday
+                ? `${doneToday} done today and nothing left waiting. A`
+                : "Nothing is due right now. A"
           } short session keeps the embers warm${streak ? ` and your ${streak}-day streak alive` : ""}.</p>
           <button class="btn btn-primary" id="hero-study"><i class="ti ti-player-play" aria-hidden="true"></i>Begin review</button>
         </div>
@@ -121,7 +122,6 @@ export async function renderDashboard(container, ctx) {
           <button class="btn btn-tool mini" id="bulk-deck-add" disabled>Add to deck</button>
           <button class="btn btn-tool mini" id="bulk-deck-rm" disabled>Remove from deck</button>
           <button class="btn btn-danger mini" id="bulk-del" disabled>Delete</button>
-          <button class="btn btn-tool" id="weak">Weak spots</button>
           <button class="btn btn-tool" id="daily">Daily (Ctrl+D)</button>
           <button class="btn btn-primary" id="start-study">Start Study</button>
         </div>
@@ -135,7 +135,7 @@ export async function renderDashboard(container, ctx) {
     </div>
   `);
 
-  // ---- Bulk toolbar (lives in the Due-for-Review row, left of "Weak spots";
+  // ---- Bulk toolbar (lives in the Due-for-Review row;
   // always visible but greyed out until cards are selected) ----
   const selCount = root.querySelector("#sel-count");
   const bulkEdit = root.querySelector("#bulk-edit");
@@ -259,7 +259,6 @@ export async function renderDashboard(container, ctx) {
   root.querySelector("#start-study").addEventListener("click", () => ctx.startStudy());
   root.querySelector("#hero-study").addEventListener("click", () => ctx.startStudy());
   root.querySelector("#daily").addEventListener("click", () => ctx.quickStudy());
-  root.querySelector("#weak").addEventListener("click", () => ctx.weakStudy());
   root.querySelector("#export-btn").addEventListener("click", () => exportVault(ctx));
   root.querySelector("#import-btn").addEventListener("click", async () => {
     await importVault(ctx);
