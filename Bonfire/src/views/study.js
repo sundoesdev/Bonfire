@@ -935,7 +935,7 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       })();
 
       session.stats.reviewed++;
-      if (rating === "forgot" || rating === "bombed") session.stats.forgot++;
+      if (rating === "forgot") session.stats.forgot++;
       else session.stats.advanced++;
       session.index++;
       render();
@@ -1087,17 +1087,15 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       }
 
       controls.innerHTML = `
-        <div class="muted" style="margin-top:12px">How well did you recall it? <span class="muted-2">(keys 1–6)</span></div>
+        <div class="muted" style="margin-top:12px">How well did you recall it? <span class="muted-2">(keys 1–4)</span></div>
         <div class="rating">
-          <button class="bombed" data-r="bombed" title="Back today — you didn't have it at all"><span class="rating-key">1</span> Bombed It</button>
-          <button class="forgot" data-r="forgot"><span class="rating-key">2</span> Forgot</button>
-          <button class="hard" data-r="hard"><span class="rating-key">3</span> Hard</button>
-          <button class="good" data-r="good"><span class="rating-key">4</span> Good</button>
-          <button class="easy" data-r="easy"><span class="rating-key">5</span> Easy</button>
-          <button class="supereasy" data-r="supereasy" title="Twice as far out as Easy — this one is welded in"><span class="rating-key">6</span> Super Easy</button>
+          <button class="forgot" data-r="forgot"><span class="rating-key">1</span> Forgot</button>
+          <button class="hard" data-r="hard"><span class="rating-key">2</span> Hard</button>
+          <button class="good" data-r="good"><span class="rating-key">3</span> Good</button>
+          <button class="easy" data-r="easy"><span class="rating-key">4</span> Easy</button>
         </div>
       `;
-      // Grade via click OR keys 1–6 (left→right). The keys are wired ONLY here,
+      // Grade via click OR keys 1–4 (left→right). The keys are wired ONLY here,
       // after the answer is revealed — so typing 1234 into the answer never grades.
       // A single `graded` flag shared by both paths prevents a click+key double-fire.
       let graded = false;
@@ -1113,7 +1111,7 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       controls.querySelectorAll(".rating button").forEach((b) =>
         b.addEventListener("click", () => grade(b.dataset.r))
       );
-      const KEY_RATINGS = { 1: "bombed", 2: "forgot", 3: "hard", 4: "good", 5: "easy", 6: "supereasy" };
+      const KEY_RATINGS = { 1: "forgot", 2: "hard", 3: "good", 4: "easy" };
       function onGradeKey(e) {
         // A single-card review has no nav lock, so the user can leave mid-reveal and
         // strand this listener — grading a card that is no longer on screen. If the

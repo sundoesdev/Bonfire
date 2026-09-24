@@ -284,16 +284,18 @@ fn sm2_config_from(json: Option<String>) -> sm2::Sm2Config {
 fn fsrs_config_from(json: Option<String>) -> fsrs::FsrsConfig {
     let mut cfg = fsrs::FsrsConfig::default();
     if let Some(v) = json.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()) {
+        let (r_lo, r_hi) = fsrs::RETENTION_BOUNDS;
         if let Some(x) = v.get("requestRetention").and_then(|x| x.as_f64()) {
-            if (0.7..=0.97).contains(&x) {
-                cfg.request_retention = x;
+            if x.is_finite() {
+                cfg.request_retention = x.clamp(r_lo, r_hi);
             }
         }
         if let Some(arr) = v.get("weights").and_then(|x| x.as_array()) {
             if arr.len() == fsrs::W_LEN {
                 for (i, item) in arr.iter().enumerate() {
-                    if let Some(f) = item.as_f64() {
-                        cfg.weights[i] = f;
+                    if let Some(f) = item.as_f64().filter(|f| f.is_finite()) {
+                        let (lo, hi) = fsrs::WEIGHT_BOUNDS[i];
+                        cfg.weights[i] = f.clamp(lo, hi);
                     }
                 }
             }
@@ -358,14 +360,12 @@ fn apply_review(
             elapsed,
             &cfg,
         );
-        let r = fsrs::adjust_for_rating(rating, r);
         shard.fsrs_stability = r.stability;
         shard.fsrs_difficulty = r.difficulty;
         shard.fsrs_state = r.state;
         shard.review_interval = r.interval;
         shard.review_next = r.next;
         shard.review_repetitions += 1;
-        // "Bombed it" maps to grade 1, so this counts both failure buttons.
         if grade == 1 {
             shard.lapses += 1;
         }
@@ -379,7 +379,6 @@ fn apply_review(
             shard.review_ease,
             &cfg,
         );
-        let r = sm2::adjust_for_rating(rating, r);
         shard.review_interval = r.interval;
         shard.review_repetitions = r.repetitions;
         shard.review_ease = r.ease;

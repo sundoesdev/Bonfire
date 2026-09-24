@@ -34,12 +34,10 @@
   --danger: #B23A2E;             /* warm-shifted destructive */
   --danger-soft: #F4DCD7;
   /* Warm grade spectrum for the reveal-and-grade cards (text + tinted hotkey chip). */
-  --grade-bombed: #7A1F12;  --grade-bombed-chip: #EFCFC8;
   --grade-forgot: #9A3324;  --grade-forgot-chip: #F4DCD7;
   --grade-hard: #8A5A1E;    --grade-hard-chip: #F0E2C8;
   --grade-good: #4F6E3F;    --grade-good-chip: #E3EBD8;
   --grade-easy: #2F6E5E;    --grade-easy-chip: #DCEBE4;
-  --grade-supereasy: #2B5F76; --grade-supereasy-chip: #D8E6EC;
   --code-bg: #F6EFE2;            /* code surface */
   --code-text: #4A4136;          /* base code text */
   --shadow-sm: 0 1px 2px rgba(120,90,50,0.06);
@@ -743,20 +741,16 @@ textarea { resize: vertical; }
   cursor: pointer; transition: box-shadow var(--transition), transform var(--t-fast) var(--ease), border-color var(--transition);
 }
 .rating button:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
-.rating .bombed { color: var(--grade-bombed); }
 .rating .forgot { color: var(--grade-forgot); }
 .rating .hard { color: var(--grade-hard); }
 .rating .good { color: var(--grade-good); }
 .rating .easy { color: var(--grade-easy); }
-.rating .supereasy { color: var(--grade-supereasy); }
-/* The 1–6 hotkey hint chip on each rating button (item 4). */
+/* The 1–4 hotkey hint chip on each rating button. */
 .rating-key { display: inline-block; min-width: 16px; padding: 1px 6px; border-radius: 5px; font-size: 10px; font-weight: 600; font-family: var(--font-mono); }
-.rating .bombed .rating-key { background: var(--grade-bombed-chip); color: var(--grade-bombed); }
 .rating .forgot .rating-key { background: var(--grade-forgot-chip); color: var(--grade-forgot); }
 .rating .hard .rating-key { background: var(--grade-hard-chip); color: var(--grade-hard); }
 .rating .good .rating-key { background: var(--grade-good-chip); color: var(--grade-good); }
 .rating .easy .rating-key { background: var(--grade-easy-chip); color: var(--grade-easy); }
-.rating .supereasy .rating-key { background: var(--grade-supereasy-chip); color: var(--grade-supereasy); }
 /* Keyboard hint chip on the Submit button. */
 .kbd { font-size: 10.5px; background: rgba(255,255,255,0.22); border-radius: 5px; padding: 2px 6px; font-family: var(--font-mono); margin-left: 4px; }
 .full-width { width: 100%; }
@@ -1228,12 +1222,10 @@ body.theme-dark {
   --danger: #E0664F;
   --danger-soft: #3A2420;
   /* Grade spectrum, lightened for the coal surface (text) + dark-tinted chips. */
-  --grade-bombed: #EE6B52;  --grade-bombed-chip: #3F211C;
   --grade-forgot: #E0826F;  --grade-forgot-chip: #3A2622;
   --grade-hard: #D6A45A;    --grade-hard-chip: #352B1C;
   --grade-good: #8FB87A;    --grade-good-chip: #25301F;
   --grade-easy: #6FB8A6;    --grade-easy-chip: #1F302B;
-  --grade-supereasy: #6FA8C0; --grade-supereasy-chip: #1D2A32;
   --code-bg: #141211;
   --code-text: #C9BFB2;
   --shadow-sm: 0 1px 2px rgba(0,0,0,0.30);

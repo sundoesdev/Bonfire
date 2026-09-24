@@ -16,6 +16,37 @@ pub const DEFAULT_WEIGHTS: [f64; W_LEN] = [
     1.9813, 0.0953, 0.2975, 2.2042, 0.2407, 2.9466,
 ];
 
+/// Per-weight `(min, max)`, taken from the FSRS optimizer's own `WeightClipper` —
+/// the range the model is fitted within. The settings UI mirrors these, but the
+/// clamp has to live here too: these values drive scheduling, and a limit that only
+/// exists in the frontend is not a limit.
+pub const WEIGHT_BOUNDS: [(f64, f64); W_LEN] = [
+    (0.01, 100.0), // 0  initial stability, Again
+    (0.01, 100.0), // 1  initial stability, Hard
+    (0.01, 100.0), // 2  initial stability, Good
+    (0.01, 100.0), // 3  initial stability, Easy
+    (1.0, 10.0),   // 4  initial difficulty base
+    (0.1, 5.0),    // 5  initial difficulty spread per grade
+    (0.1, 5.0),    // 6  difficulty change per grade
+    (0.0, 0.75),   // 7  difficulty mean-reversion strength
+    (0.0, 4.0),    // 8  stability growth scale
+    (0.0, 0.8),    // 9  stability saturation
+    (0.01, 3.0),   // 10 low-retrievability bonus
+    (0.5, 5.0),    // 11 post-lapse stability scale
+    (0.01, 0.2),   // 12 post-lapse difficulty penalty
+    (0.01, 0.9),   // 13 post-lapse stability exponent
+    (0.01, 3.0),   // 14 post-lapse retrievability factor
+    (0.0, 1.0),    // 15 Hard penalty
+    (1.0, 6.0),    // 16 Easy bonus
+];
+
+/// Allowed range for request retention. The floor is deliberate: below 0.90 the
+/// intervals a single "Good" earns grow fast enough to feel like the card vanished.
+pub const RETENTION_BOUNDS: (f64, f64) = (0.90, 0.99);
+
+/// The published FSRS default retention, and what "reset" restores.
+pub const DEFAULT_RETENTION: f64 = 0.90;
+
 /// Tunable FSRS parameters (see the "Spaced repetition" settings section).
 pub struct FsrsConfig {
     pub weights: [f64; W_LEN],
@@ -27,7 +58,7 @@ impl Default for FsrsConfig {
     fn default() -> Self {
         FsrsConfig {
             weights: DEFAULT_WEIGHTS,
-            request_retention: 0.9,
+            request_retention: DEFAULT_RETENTION,
         }
     }
 }
@@ -75,7 +106,11 @@ fn next_recall_stability(w: &[f64; W_LEN], d: f64, s: f64, r: f64, grade: i64) -
 }
 
 fn next_forget_stability(w: &[f64; W_LEN], d: f64, s: f64, r: f64) -> f64 {
-    (w[11] * d.powf(-w[12]) * ((s + 1.0).powf(w[13]) - 1.0) * ((1.0 - r) * w[14]).exp()).max(0.1)
+    let raw = w[11] * d.powf(-w[12]) * ((s + 1.0).powf(w[13]) - 1.0) * ((1.0 - r) * w[14]).exp();
+    // Upstream clamps this to the pre-lapse stability. Without the clamp a lapse on a
+    // low-stability card can *raise* it — forgetting a card would schedule it further
+    // out than remembering it did.
+    raw.min(s).max(0.1)
 }
 
 /// Run one FSRS review step.
@@ -99,11 +134,13 @@ pub fn fsrs(
         (init_stability(w, grade), init_difficulty(w, grade), false)
     } else {
         let r = retrievability(elapsed_days.max(0) as f64, stability);
+        // The *new* difficulty drives the stability update, matching upstream — the
+        // grade you just gave is supposed to be reflected in both, not only in D.
         let d = next_difficulty(w, difficulty, grade);
         if grade == 1 {
-            (next_forget_stability(w, difficulty, stability, r), d, true)
+            (next_forget_stability(w, d, stability, r), d, true)
         } else {
-            (next_recall_stability(w, difficulty, stability, r, grade), d, false)
+            (next_recall_stability(w, d, stability, r, grade), d, false)
         }
     };
 
@@ -123,43 +160,17 @@ pub fn fsrs(
     }
 }
 
-/// Maps the review buttons to FSRS grades (1=Again .. 4=Easy).
+/// Maps the four review buttons to FSRS grades (1=Again .. 4=Easy).
 ///
-/// FSRS only defines four grades — it has exactly four initial-stability weights
-/// and clamps anything else — so the two outer buttons share their neighbour's
-/// grade here and are separated afterwards by [`adjust_for_rating`]. Widening the
-/// scale instead would mean inventing weights the model was never fitted with.
+/// Older review-log rows may carry ratings the buttons no longer offer; they fall
+/// through to "good" here, but nothing replays the log through the scheduler.
 pub fn grade_from_rating(rating: &str) -> i64 {
     match rating {
-        "bombed" | "forgot" => 1,
+        "forgot" => 1,
         "hard" => 2,
         "good" => 3,
-        "easy" | "supereasy" => 4,
+        "easy" => 4,
         _ => 3,
-    }
-}
-
-/// How much further than "easy" the "super easy" button pushes a card out.
-const SUPER_EASY_MULTIPLIER: f64 = 2.0;
-
-/// Apply the two buttons that sit outside FSRS's own scale.
-///
-/// "Bombed it" pins the card to today so it returns within hours; "super easy"
-/// doubles the computed interval. Stability and difficulty are left exactly as FSRS
-/// computed them — only the interval this one review earns is overridden, so the
-/// model's memory of the card stays its own.
-pub fn adjust_for_rating(rating: &str, r: FsrsResult) -> FsrsResult {
-    let interval = match rating {
-        "bombed" => 0,
-        "supereasy" => ((r.interval as f64 * SUPER_EASY_MULTIPLIER).round() as i64).max(1),
-        _ => return r,
-    };
-    FsrsResult {
-        interval,
-        next: (Local::now().date_naive() + Duration::days(interval))
-            .format("%Y-%m-%d")
-            .to_string(),
-        ..r
     }
 }
 
@@ -207,51 +218,127 @@ mod tests {
 
     #[test]
     fn ratings_map_to_the_documented_grades() {
-        assert_eq!(grade_from_rating("bombed"), 1);
         assert_eq!(grade_from_rating("forgot"), 1);
         assert_eq!(grade_from_rating("hard"), 2);
         assert_eq!(grade_from_rating("good"), 3);
         assert_eq!(grade_from_rating("easy"), 4);
-        assert_eq!(grade_from_rating("supereasy"), 4);
         assert_eq!(grade_from_rating("nonsense"), 3, "unknown falls back to good");
+        // Ratings retired in 0.4.0 still appear in old review_log rows.
+        assert_eq!(grade_from_rating("bombed"), 3);
+        assert_eq!(grade_from_rating("supereasy"), 3);
+    }
+
+    /// Run `grades` in sequence, reviewing each card exactly when it was scheduled.
+    fn ladder(grades: &[i64], retention: f64) -> Vec<i64> {
+        let cfg = FsrsConfig {
+            request_retention: retention,
+            ..FsrsConfig::default()
+        };
+        let (mut s, mut d, mut state, mut iv) = (0.0, 0.0, "new".to_string(), 0);
+        grades
+            .iter()
+            .map(|&g| {
+                let r = fsrs(g, s, d, &state, iv, &cfg);
+                s = r.stability;
+                d = r.difficulty;
+                state = r.state;
+                iv = r.interval;
+                iv
+            })
+            .collect()
     }
 
     #[test]
-    fn bombed_brings_the_card_back_today() {
+    fn a_lapse_never_raises_stability() {
         let cfg = FsrsConfig::default();
-        let r = adjust_for_rating(
-            "bombed",
-            fsrs(grade_from_rating("bombed"), 40.0, 5.0, "review", 40, &cfg),
-        );
-        assert_eq!(r.interval, 0);
-        assert_eq!(r.next, Local::now().date_naive().format("%Y-%m-%d").to_string());
+        for &s in &[0.1, 0.4, 1.0, 2.5, 8.0, 40.0, 232.0] {
+            for &d in &[1.0, 2.0, 5.0, 9.0, 10.0] {
+                // Reviewed on time, and well overdue — the overdue case is where the
+                // missing clamp used to let "Forgot" increase stability.
+                for &elapsed in &[0, 1, 3, 30, 400] {
+                    let out = fsrs(1, s, d, "review", elapsed, &cfg);
+                    assert!(
+                        out.stability <= s + 1e-9,
+                        "forgetting raised stability: S={s} D={d} elapsed={elapsed} -> {}",
+                        out.stability
+                    );
+                }
+            }
+        }
     }
 
     #[test]
-    fn super_easy_pushes_out_twice_as_far_as_easy() {
-        let cfg = FsrsConfig::default();
-        let easy = adjust_for_rating(
-            "easy",
-            fsrs(grade_from_rating("easy"), 10.0, 5.0, "review", 10, &cfg),
-        );
-        let sup = adjust_for_rating(
-            "supereasy",
-            fsrs(grade_from_rating("supereasy"), 10.0, 5.0, "review", 10, &cfg),
-        );
-        assert_eq!(sup.interval, easy.interval * 2);
-        // The model's memory of the card is untouched — only this interval moved.
-        assert_eq!(sup.stability, easy.stability);
-        assert_eq!(sup.difficulty, easy.difficulty);
+    fn grades_stay_ordered_over_a_long_run() {
+        let hard = ladder(&[2; 12], 0.95);
+        let good = ladder(&[3; 12], 0.95);
+        let easy = ladder(&[4; 12], 0.95);
+        for i in 0..12 {
+            assert!(hard[i] <= good[i], "hard outran good at step {i}");
+            assert!(good[i] <= easy[i], "good outran easy at step {i}");
+        }
+        assert!(good[11] > 10 * good[0], "good should stretch out substantially");
+        assert!(easy[11] > good[11], "easy should end further out than good");
     }
 
     #[test]
-    fn the_ordinary_ratings_pass_through_untouched() {
-        let cfg = FsrsConfig::default();
-        for rating in ["forgot", "hard", "good", "easy"] {
-            let base = fsrs(grade_from_rating(rating), 10.0, 5.0, "review", 10, &cfg);
-            let (i, next) = (base.interval, base.next.clone());
-            let out = adjust_for_rating(rating, base);
-            assert_eq!((out.interval, out.next), (i, next), "{rating}");
+    fn hard_keeps_a_card_in_daily_rotation() {
+        // Hard is a successful recall, so stability does creep up — but at the shipped
+        // retention the rounded interval stays at one day however long you keep pressing
+        // it. "Hard means I see it more" is a property worth holding onto.
+        assert_eq!(ladder(&[2; 12], 0.95), vec![1; 12]);
+    }
+
+    #[test]
+    fn forgetting_repeatedly_pins_the_card_to_tomorrow() {
+        assert_eq!(ladder(&[1; 8], 0.95), vec![1; 8]);
+    }
+
+    #[test]
+    fn the_good_ladder_at_the_shipped_retention_is_locked() {
+        // Regression lock: the schedule the user actually studies against.
+        assert_eq!(
+            ladder(&[3; 10], 0.95),
+            vec![1, 2, 4, 7, 12, 20, 32, 49, 75, 111]
+        );
+    }
+
+    #[test]
+    fn every_weight_at_its_documented_bounds_still_schedules() {
+        // The settings UI lets each weight be set anywhere in its published range;
+        // no corner of that range may produce NaN, a negative interval, or a panic.
+        for (i, &(lo, hi)) in WEIGHT_BOUNDS.iter().enumerate() {
+            for &edge in &[lo, hi] {
+                let mut cfg = FsrsConfig {
+                    request_retention: 0.99,
+                    ..FsrsConfig::default()
+                };
+                cfg.weights[i] = edge;
+                for grade in 1..=4 {
+                    for &(s, d, state) in
+                        &[(0.0, 0.0, "new"), (1.0, 5.0, "review"), (232.0, 9.9, "review")]
+                    {
+                        let r = fsrs(grade, s, d, state, 10, &cfg);
+                        assert!(
+                            r.stability.is_finite() && r.difficulty.is_finite(),
+                            "w[{i}]={edge} grade={grade} produced a non-finite state"
+                        );
+                        assert!(r.interval >= 1, "w[{i}]={edge} produced interval {}", r.interval);
+                        assert!((1.0..=10.0).contains(&r.difficulty));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_default_weights_sit_inside_their_bounds() {
+        for (i, &w) in DEFAULT_WEIGHTS.iter().enumerate() {
+            let (lo, hi) = WEIGHT_BOUNDS[i];
+            assert!(
+                (lo..=hi).contains(&w),
+                "default w[{i}]={w} is outside its own bound {lo}..={hi}"
+            );
         }
     }
 }
+
