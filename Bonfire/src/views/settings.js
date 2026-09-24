@@ -5,7 +5,7 @@ import { FONTS, SCALES, appearance, setAppearance } from "../theme.js";
 import { buildStudyConfigForm, loadConfig, saveConfig } from "./study.js";
 import {
   PRESET_OPTIONS,
-  DEBT_DECK_ID,
+  DERIVED_DECK_IDS,
   isNativeDeck,
   SR_ALGORITHMS,
   DEFAULT_ALGORITHM,
@@ -135,7 +135,7 @@ export async function renderSettings(container, ctx) {
       <section class="settings-tab" data-tab="decks">
       <div class="section-title">Decks</div>
       <div class="panel">
-        <div class="muted" style="margin-bottom:8px">A deck's preset controls its fields — the <b>Code</b> preset shows the Language field and syntax highlighting; other presets hide them so you can study any subject. Cards in a deleted deck move to the default deck. Star one deck as your <b>daily default</b> — the Ctrl+D quick-start studies it. The built-in <b>Default</b> and <b>Debt</b> decks (greyed) are required by Hearth — they can't be renamed or deleted, but you can change their preset or make one your daily default.</div>
+        <div class="muted" style="margin-bottom:8px">A deck's preset controls its fields — the <b>Code</b> preset shows the Language field and syntax highlighting; other presets hide them so you can study any subject. Cards in a deleted deck move to the default deck. Star one deck as your <b>daily default</b> — the Ctrl+D quick-start studies it. The built-in <b>Default</b>, <b>Debt</b> and <b>Archived</b> decks (greyed) are required by Hearth — they can't be renamed or deleted. Debt and Archived fill themselves: Debt holds whatever is overdue, Archived holds cards you've switched out of the review rotation.</div>
         <div class="row" style="margin-bottom:10px;gap:10px;align-items:center">
           <button type="button" class="btn btn-toggle ${hideNative ? "on" : ""}" id="toggle-native">Hide built-in decks</button>
           <div class="spacer"></div>
@@ -276,13 +276,13 @@ export async function renderSettings(container, ctx) {
 
   // Dedicated daily-deck picker: lists every deck (incl. the built-in Default),
   // independent of the "Hide built-in decks" toggle — so Default is always selectable
-  // as the Ctrl+D quick-start deck. The auto Debt deck is excluded.
+  // as the Ctrl+D quick-start deck. The auto Debt/Archived decks are excluded.
   const dailyDeckSelect = root.querySelector("#daily-deck-select");
   dailyDeckSelect.innerHTML =
     `<option value="">None</option>` +
     ctx
       .decks()
-      .filter((d) => d.id !== DEBT_DECK_ID)
+      .filter((d) => !DERIVED_DECK_IDS.has(d.id))
       .map((d) => `<option value="${esc(d.id)}" ${d.id === dailyDeck ? "selected" : ""}>${esc(d.name) || "(unnamed)"}</option>`)
       .join("");
   dailyDeckSelect.addEventListener("change", async () => {
@@ -630,8 +630,8 @@ function renderIntegrity(root, ctx) {
   ctx.state.allShards.forEach((s) => {
     const tags = s.tags || [];
     const issues = [];
-    // A card needs a *real* organizing deck — the auto Debt deck doesn't count.
-    if (!(s.deckIds || []).some((id) => id !== DEBT_DECK_ID)) issues.push("no deck");
+    // A card needs a *real* organizing deck — the derived ones don't count.
+    if (!(s.deckIds || []).some((id) => !DERIVED_DECK_IDS.has(id))) issues.push("no deck");
     if (!getDifficulty(tags)) issues.push("no difficulty");
     if (issues.length) hard.push({ s, issues });
     // Topic tag = any tag that isn't a reserved keyword tag.
@@ -678,7 +678,7 @@ function renderIntegrity(root, ctx) {
 }
 
 // Render the editable list of decks (rename, change preset, delete, set daily).
-// `hideNative` drops the built-in Default/Debt decks from the list (item 2).
+// `hideNative` drops the built-in Default/Debt/Archived decks from the list.
 function renderDecks(root, ctx, dailyDeck = "", hideNative = false) {
   const list = root.querySelector("#deck-list");
   let decks = ctx.decks();
@@ -691,15 +691,16 @@ function renderDecks(root, ctx, dailyDeck = "", hideNative = false) {
   }
 
   decks.forEach((d) => {
-    const isDebt = d.id === DEBT_DECK_ID;
-    // Native decks (Default/Debt) ship with Bonfire: greyed, no rename, no delete.
+    const isDerived = DERIVED_DECK_IDS.has(d.id);
+    // Native decks (Default/Debt/Archived) ship with Bonfire: greyed, no rename,
+    // no delete.
     const isProtected = isNativeDeck(d.id);
     const isDaily = d.id === dailyDeck;
     const count = ctx.state.allShards.filter((s) => (s.deckIds || []).includes(d.id)).length;
     const row = el(`
       <div class="list-row ${isProtected ? "native-deck" : ""}">
         <span class="title">${esc(d.name) || "(unnamed)"}</span>
-        ${isProtected ? `<span class="badge" title="Built-in deck — required by Hearth, can't be renamed or deleted">${isDebt ? "auto" : "built-in"}</span>` : ""}
+        ${isProtected ? `<span class="badge" title="Built-in deck — required by Hearth, can't be renamed or deleted">${isDerived ? "auto" : "built-in"}</span>` : ""}
         <span class="cat">${count} card${count === 1 ? "" : "s"}</span>
         ${
           isDaily

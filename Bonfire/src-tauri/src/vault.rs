@@ -69,17 +69,21 @@ pub struct VaultData {
 
 // ---------------------------------------------------------------- database
 
-/// Drop the derived Debt-deck membership from a card.
+/// Drop the derived deck memberships (Debt, Archived) from a card.
 ///
-/// The Debt deck is recomputed locally from due dates by `db::sync_debt_deck`, so it
-/// must never reach the merge or the file tree. `read_db` and `write_tree` have to
-/// strip it *identically*: if only one side does, then on a device that is behind —
-/// where every card is overdue and so carries `card-debt` locally — every card's
-/// content differs from the remote's and the merge reports a conflict for the entire
+/// Both are recomputed locally by `db::sync_derived_decks`, so neither may reach the
+/// merge or the file tree. `read_db` and `write_tree` have to strip them
+/// *identically*: if only one side does, then on a device that is behind — where
+/// every card is overdue and so carries `card-debt` locally — every card's content
+/// differs from the remote's and the merge reports a conflict for the entire
 /// library. That asymmetry is exactly the bug this shared helper exists to prevent.
-fn strip_debt_deck(card: &mut Shard) {
-    card.deck_ids.retain(|d| d != db::DEBT_DECK_ID);
-    if card.deck_id == db::DEBT_DECK_ID {
+///
+/// Note what is *not* stripped: `review_enabled` is a real field on the card and
+/// syncs normally, so archiving on one device archives on all of them. It is only
+/// the derived membership row that stays local.
+fn strip_derived_decks(card: &mut Shard) {
+    card.deck_ids.retain(|d| !db::DERIVED_DECK_IDS.contains(&d.as_str()));
+    if db::DERIVED_DECK_IDS.contains(&card.deck_id.as_str()) {
         card.deck_id = card.deck_ids.first().cloned().unwrap_or_default();
     }
 }
@@ -88,7 +92,7 @@ fn strip_debt_deck(card: &mut Shard) {
 pub fn read_db(conn: &Connection) -> Result<VaultData> {
     let mut cards = db::all_shards(conn)?;
     for card in cards.iter_mut() {
-        strip_debt_deck(card);
+        strip_derived_decks(card);
     }
     let mut playbooks = Vec::new();
     for p in db::all_playbooks(conn)? {
@@ -142,7 +146,10 @@ pub fn write_db(conn: &Connection, data: &VaultData) -> Result<()> {
         db::save_deck(conn, deck)?;
     }
     for id in existing_ids(conn, "decks")? {
-        if !deck_ids.contains(&id.as_str()) && id != db::DEFAULT_DECK_ID && id != db::DEBT_DECK_ID {
+        if !deck_ids.contains(&id.as_str())
+            && id != db::DEFAULT_DECK_ID
+            && !db::DERIVED_DECK_IDS.contains(&id.as_str())
+        {
             db::delete_deck_in_tx(conn, &id)?;
         }
     }
@@ -237,10 +244,10 @@ pub fn write_tree(dir: &Path, data: &VaultData) -> std::io::Result<()> {
 
     for card in &data.cards {
         let mut card = card.clone();
-        // Syncing the derived Debt deck would churn every card's file whenever a due
-        // date passed on one machine, so membership is dropped here (see
-        // `strip_debt_deck`) and recomputed on read.
-        strip_debt_deck(&mut card);
+        // Syncing a derived deck would churn every card's file whenever a due date
+        // passed on one machine, so membership is dropped here (see
+        // `strip_derived_decks`) and recomputed on read.
+        strip_derived_decks(&mut card);
         for m in card.media.iter_mut() {
             if let Some((bytes, ext)) = decode_data_url(&m.data_url) {
                 let name = format!("{}.{}", safe_name(&m.id), ext);
@@ -526,7 +533,7 @@ mod tests {
         c.review_enabled = true;
         c.review_next = "2020-01-01".into(); // long overdue → lands in the Debt deck
         db::save_shard(&src, &c).unwrap();
-        db::sync_debt_deck(&src).unwrap();
+        db::sync_derived_decks(&src).unwrap();
         assert!(
             db::all_shards(&src).unwrap()[0]
                 .deck_ids
@@ -551,6 +558,71 @@ mod tests {
             serde_json::to_string(&local.cards[0]).unwrap(),
             serde_json::to_string(&from_tree.cards[0]).unwrap(),
             "local and tree must serialize identically or the merge sees a false conflict"
+        );
+    }
+
+    #[test]
+    fn archive_deck_membership_never_reaches_the_merge() {
+        let src = vault_db();
+        let mut c = card("a");
+        c.review_enabled = false; // out of rotation → lands in the Archived deck
+        db::save_shard(&src, &c).unwrap();
+        db::sync_derived_decks(&src).unwrap();
+        assert!(
+            db::all_shards(&src).unwrap()[0]
+                .deck_ids
+                .iter()
+                .any(|d| d == db::ARCHIVE_DECK_ID),
+            "precondition: an archived card is in the Archived deck"
+        );
+
+        let local = read_db(&src).unwrap();
+        let dir = TmpDir::new("archive");
+        write_tree(&dir.0, &local).unwrap();
+        let from_tree = read_tree(&dir.0).unwrap();
+
+        assert!(
+            !local.cards[0].deck_ids.iter().any(|d| d == db::ARCHIVE_DECK_ID),
+            "read_db must strip the derived Archived deck"
+        );
+        assert_eq!(
+            serde_json::to_string(&local.cards[0]).unwrap(),
+            serde_json::to_string(&from_tree.cards[0]).unwrap(),
+            "local and tree must serialize identically or the merge sees a false conflict"
+        );
+        // The flag itself is a real field and must survive: archiving on one device
+        // has to archive on the others. Only the derived membership stays local.
+        assert!(
+            !from_tree.cards[0].review_enabled,
+            "review_enabled must sync even though the Archived deck does not"
+        );
+    }
+
+    #[test]
+    fn archiving_a_card_takes_it_out_of_the_debt_deck() {
+        let src = vault_db();
+        let mut c = card("a");
+        c.review_enabled = true;
+        c.review_next = "2020-01-01".into();
+        db::save_shard(&src, &c).unwrap();
+        db::sync_derived_decks(&src).unwrap();
+        let decks = |conn: &Connection| db::all_shards(conn).unwrap()[0].deck_ids.clone();
+        assert!(decks(&src).iter().any(|d| d == db::DEBT_DECK_ID));
+
+        db::set_review_enabled(&src, &["a".to_string()], false).unwrap();
+        let after = decks(&src);
+        assert!(
+            !after.iter().any(|d| d == db::DEBT_DECK_ID),
+            "an archived card is not in debt — it is not expected back"
+        );
+        assert!(after.iter().any(|d| d == db::ARCHIVE_DECK_ID));
+
+        db::set_review_enabled(&src, &["a".to_string()], true).unwrap();
+        let back = decks(&src);
+        assert!(!back.iter().any(|d| d == db::ARCHIVE_DECK_ID));
+        assert!(
+            back.iter().any(|d| d == db::DEBT_DECK_ID),
+            "unarchiving a still-overdue card returns it to debt"
         );
     }
 

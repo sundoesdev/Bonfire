@@ -72,10 +72,10 @@ let deckSwitcher;
 // Reload shards, decks, and custom languages from the backend, then scope the
 // view-facing `shards` array to the current deck.
 async function refreshShards() {
-  // Reconcile the auto Debt deck (overdue cards in / caught-up cards out) before
-  // reading, so it's accurate wherever the user looks. Cheap, set-based SQL.
+  // Reconcile the derived decks (Debt and Archived) before reading, so they're
+  // accurate wherever the user looks. Cheap, set-based SQL.
   try {
-    await api.syncDebtDeck();
+    await api.syncDerivedDecks();
   } catch (_e) {
     /* non-fatal — fall back to whatever's stored */
   }

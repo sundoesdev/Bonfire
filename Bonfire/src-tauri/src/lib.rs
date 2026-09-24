@@ -94,8 +94,8 @@ fn delete_deck(state: State<AppState>, id: String) -> Result<(), String> {
     if id == db::DEFAULT_DECK_ID {
         return Err("The default deck cannot be deleted.".into());
     }
-    if id == db::DEBT_DECK_ID {
-        return Err("The Debt deck cannot be deleted.".into());
+    if db::DERIVED_DECK_IDS.contains(&id.as_str()) {
+        return Err("Hearth's automatic decks cannot be deleted.".into());
     }
     with_conn(&state, |c| db::delete_deck(c, &id))
 }
@@ -157,11 +157,23 @@ fn playbook_card_ids(state: State<AppState>) -> Result<Vec<String>, String> {
     with_conn(&state, |c| db::playbook_card_ids(c))
 }
 
-/// Reconcile the Debt deck with the current overdue cards (item 5). Called by the
-/// frontend on refresh; cheap, set-based SQL.
+/// Reconcile the derived decks (Debt, Archived) with the cards' current state.
+/// Called by the frontend on refresh; cheap, set-based SQL.
 #[tauri::command]
-fn sync_debt_deck(state: State<AppState>) -> Result<(), String> {
-    with_conn(&state, |c| db::sync_debt_deck(c))
+fn sync_derived_decks(state: State<AppState>) -> Result<(), String> {
+    with_conn(&state, |c| db::sync_derived_decks(c))
+}
+
+/// Take cards in or out of the review rotation. Archived cards leave the study
+/// queue and the Debt deck and land in Archived, keeping every real deck they were
+/// already in. Narrow on purpose — see `db::set_review_enabled`.
+#[tauri::command]
+fn set_review_enabled(
+    state: State<AppState>,
+    ids: Vec<String>,
+    enabled: bool,
+) -> Result<usize, String> {
+    with_conn(&state, |c| db::set_review_enabled(c, &ids, enabled))
 }
 
 /// Save just the study hint. Narrow on purpose — see `db::set_shard_hint`.
@@ -305,6 +317,11 @@ fn fsrs_config_from(json: Option<String>) -> fsrs::FsrsConfig {
 }
 
 /// Days elapsed since an RFC-3339 timestamp (0 if empty/unparseable).
+///
+/// Measured from when the card was last *reviewed*, not from when it was last due.
+/// That is what makes archiving safe to leave alone: a card set aside for six
+/// months comes back with a genuinely low retrievability, and FSRS treats it as the
+/// long gap it was. Nothing has to decay it on a timer.
 fn elapsed_days(last_reviewed: &str) -> i64 {
     if last_reviewed.is_empty() {
         return 0;
@@ -630,7 +647,8 @@ pub fn run() {
             delete_playbook,
             save_playbook_nodes,
             playbook_card_ids,
-            sync_debt_deck,
+            sync_derived_decks,
+            set_review_enabled,
             set_shard_hint,
             submit_review,
             preview_review,

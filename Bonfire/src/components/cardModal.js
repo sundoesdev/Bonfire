@@ -104,6 +104,11 @@ export function openCardModal(ctx, { id } = {}) {
         <div class="actions">
           <button class="btn btn-danger" id="cm-del">Delete</button>
           <div class="spacer"></div>
+          <button class="btn btn-secondary" id="cm-archive" title="${
+            shard.reviewEnabled
+              ? "Stop scheduling this card. It keeps its decks and its memory state, and stays in Archived until you switch it back on."
+              : "Put this card back into the review rotation."
+          }">${shard.reviewEnabled ? "Archive" : "Unarchive"}</button>
           <button class="btn btn-secondary" id="cm-review">Review</button>
           <button class="btn btn-accent" id="cm-edit">Edit</button>
           <button class="btn btn-secondary" id="cm-close">Close</button>
@@ -126,6 +131,14 @@ export function openCardModal(ctx, { id } = {}) {
       // Reviewing from inside the modal is a detour: reopen it afterwards so the
       // user lands back where they were. Every other entry point must not.
       ctx.reviewCard(shard.id, { reopen: true });
+    });
+    body.querySelector("#cm-archive").addEventListener("click", async () => {
+      const enable = !shard.reviewEnabled;
+      await ctx.api.setReviewEnabled([shard.id], enable);
+      shard.reviewEnabled = enable;
+      ctx.toast(enable ? "Back in the review rotation" : "Archived — it won't come up in study");
+      ctx.refreshView();
+      render();
     });
     body.querySelector("#cm-del").addEventListener("click", async () => {
       if (!confirm("Delete this shard?")) return;

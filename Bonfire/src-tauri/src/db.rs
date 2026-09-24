@@ -13,6 +13,16 @@ pub const DEFAULT_DECK_ID: &str = "default";
 /// can browse / mass-select / study their debt like any other deck.
 pub const DEBT_DECK_ID: &str = "card-debt";
 
+/// Fixed id of the always-present, non-deletable "Archived" deck. Cards taken out
+/// of the review rotation (`review_enabled = 0`) are auto-added here by
+/// `sync_derived_decks`, so they stay browsable without cluttering study.
+pub const ARCHIVE_DECK_ID: &str = "card-archive";
+
+/// The decks whose membership is computed from card state rather than chosen by
+/// the user. They are never hand-assigned and never synced — each device derives
+/// them from its own clock and the cards' own fields.
+pub const DERIVED_DECK_IDS: [&str; 2] = [DEBT_DECK_ID, ARCHIVE_DECK_ID];
+
 /// Create the schema if it does not already exist.
 pub fn init(conn: &Connection) -> Result<()> {
     conn.execute_batch(
@@ -167,6 +177,12 @@ fn migrate(conn: &Connection) -> Result<()> {
         "INSERT OR IGNORE INTO decks (id, name, preset, position, created_at, modified_at)
          VALUES (?1, 'Debt', 'code', 999, ?2, ?2)",
         params![DEBT_DECK_ID, now],
+    )?;
+    // The always-present, non-deletable "Archived" deck, sorted just before Debt.
+    conn.execute(
+        "INSERT OR IGNORE INTO decks (id, name, preset, position, created_at, modified_at)
+         VALUES (?1, 'Archived', 'code', 998, ?2, ?2)",
+        params![ARCHIVE_DECK_ID, now],
     )?;
     conn.execute(
         "UPDATE shards SET deck_id = ?1
@@ -437,11 +453,17 @@ fn sync_legacy_deck(conn: &Connection, card_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Reconcile the Debt deck with reality: add every review-enabled, overdue card
-/// (reviewNext strictly before today) and remove any current member that's caught
-/// up (review disabled, no due date, or due today/later). Cards keep their real
-/// decks — Debt membership is additive. Cheap: two set-based statements.
-pub fn sync_debt_deck(conn: &Connection) -> Result<()> {
+/// Reconcile the derived decks with reality. Membership in both is additive —
+/// cards keep their real decks — and both are recomputed rather than stored, so
+/// they must never be hand-edited or synced. Cheap: four set-based statements.
+///
+/// **Debt**: every review-enabled card that is strictly overdue; removed once it
+/// is caught up (review disabled, no due date, or due today/later).
+///
+/// **Archived**: every card taken out of the rotation (`review_enabled = 0`);
+/// removed the moment it is switched back on. An archived card is by definition
+/// not in Debt, which the Debt statements above already handle.
+pub fn sync_derived_decks(conn: &Connection) -> Result<()> {
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     conn.execute(
         "INSERT OR IGNORE INTO card_decks (card_id, deck_id)
@@ -457,7 +479,35 @@ pub fn sync_debt_deck(conn: &Connection) -> Result<()> {
          )",
         params![DEBT_DECK_ID, today],
     )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO card_decks (card_id, deck_id)
+         SELECT id, ?1 FROM shards WHERE review_enabled = 0",
+        params![ARCHIVE_DECK_ID],
+    )?;
+    conn.execute(
+        "DELETE FROM card_decks
+         WHERE deck_id = ?1 AND card_id IN (SELECT id FROM shards WHERE review_enabled = 1)",
+        params![ARCHIVE_DECK_ID],
+    )?;
     Ok(())
+}
+
+/// Take cards in or out of the review rotation.
+///
+/// Deliberately narrow, like `set_shard_hint`: pushing a whole shard back from the
+/// frontend to flip one flag can overwrite scheduling fields a concurrent
+/// `submit_review` just wrote.
+pub fn set_review_enabled(conn: &Connection, ids: &[String], enabled: bool) -> Result<usize> {
+    let mut n = 0;
+    let now = now_iso();
+    for id in ids {
+        n += conn.execute(
+            "UPDATE shards SET review_enabled = ?2, modified_at = ?3 WHERE id = ?1",
+            params![id, enabled as i64, now],
+        )?;
+    }
+    sync_derived_decks(conn)?;
+    Ok(n)
 }
 
 /// All shards, most-recently-modified first, with deck memberships populated.
@@ -1116,6 +1166,7 @@ pub fn import_export(conn: &Connection, export: &VaultExport) -> Result<usize> {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::models::{Deck, VaultExport};
 

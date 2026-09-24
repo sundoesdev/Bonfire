@@ -176,7 +176,7 @@ fn attempt_sync(conn: &Connection, dir: &Path) -> Result<String, String> {
     vault::write_db(conn, &merged.data).map_err(|e| e.to_string())?;
     // The Debt deck is derived from due dates and is deliberately not synced, so
     // recompute it now that the merged due dates have landed.
-    let _ = db::sync_debt_deck(conn);
+    let _ = db::sync_derived_decks(conn);
 
     let device = device_id(conn);
     for c in &merged.conflicts {

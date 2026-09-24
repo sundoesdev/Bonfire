@@ -8,7 +8,7 @@ import {
   DIFFICULTIES,
   FOUNDATION_TAG,
   REVEAL_ONLY_TAG,
-  DEBT_DECK_ID,
+  DERIVED_DECK_IDS,
   cardTypeOptions,
   getDifficulty,
   isFoundation,
@@ -103,9 +103,10 @@ export function buildCardFields(ctx, shard) {
       : "";
 
   // Deck memberships (many-to-many): a card can sit in any number of decks, or none.
-  // The auto Debt deck is excluded — it's reconciled automatically, not hand-assigned.
+  // The derived decks (Debt, Archived) are excluded — they're reconciled
+// automatically from card state, not hand-assigned.
   const shardDeckIds = shard.deckIds || [];
-  const assignableDecks = ctx.decks().filter((d) => d.id !== DEBT_DECK_ID);
+  const assignableDecks = ctx.decks().filter((d) => !DERIVED_DECK_IDS.has(d.id));
   const deckChecks = assignableDecks.length
     ? assignableDecks
         .map(
@@ -265,7 +266,7 @@ export function buildCardFields(ctx, shard) {
     let tags = parseTags(tagsInput.value);
     if (!getDifficulty(tags)) tags = setDifficulty(tags, diffSel.value || DIFFICULTIES[0]);
     // Deck memberships: the checked assignable decks, plus any membership not shown
-    // in the form (e.g. the auto Debt deck) so a plain save never drops it.
+    // in the form (e.g. the auto Debt/Archived decks) so a plain save never drops it.
     const listable = new Set(assignableDecks.map((d) => d.id));
     const checkedDecks = [...node.querySelectorAll("#cf-decks input.cf-deck:checked")].map((i) => i.value);
     const deckIds = [...new Set([...checkedDecks, ...shardDeckIds.filter((id) => !listable.has(id))])];

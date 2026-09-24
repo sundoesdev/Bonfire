@@ -544,6 +544,8 @@ textarea { resize: vertical; }
   padding: 2px 9px;
   white-space: nowrap;
 }
+/* An archived card is set aside, not flagged — quieter than a normal pill. */
+.pill-muted { background: transparent; border: 0.5px solid var(--border-strong); color: var(--muted-2); }
 .pill-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--dot, var(--text-3)); filter: saturate(0.7); flex-shrink: 0; }
 /* Right-aligned muted row meta ("Lang · difficulty") used on the dashboard. */
 .row-meta { margin-left: auto; color: var(--text-3); font-size: 11px; white-space: nowrap; }
