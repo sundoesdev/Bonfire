@@ -70,18 +70,18 @@ and the app does not complain when git is absent.
 
 ### Uninstalling
 
-**Settings → Apps → Installed apps → Hearth → Uninstall**, or the Start-menu
-uninstall entry.
+**Settings → Apps → Installed apps → Hearth → Uninstall**, or the uninstall entry
+in the Start-menu **Hearth** folder.
 
-This removes the program only. **Your cards are deliberately left behind** —
-`deleteAppDataOnUninstall` is off, because an uninstaller that quietly deletes
-someone's entire study history is not a tradeoff worth making, and a reinstall
-should pick up exactly where you left off.
+The uninstaller shows a **"Delete application data"** checkbox. It is **unchecked
+by default**, so your cards survive an uninstall unless you deliberately tick it —
+and it is skipped entirely when an installer is upgrading in place.
 
-To remove the data too, delete `%APPDATA%\com.bonfire.app\` by hand *after*
-checking your vault is pushed. Open Hearth first and confirm Settings → Sync
-reports no pending changes; unlike `uninstall.sh` on Linux, nothing here can
-check that for you.
+Leave it unchecked unless you mean it. Ticking it removes
+`%APPDATA%\com.bonfire.app\` and with it every card, deck and review you have
+not pushed to a sync remote. Unlike `uninstall.sh` on Linux, **nothing checks
+whether your vault is synced first** — so if you do want a clean removal, open
+Hearth beforehand and confirm Settings → Sync reports no pending changes.
 
 ### Updating on Windows
 
