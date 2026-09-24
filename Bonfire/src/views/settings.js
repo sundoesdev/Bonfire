@@ -11,6 +11,9 @@ import {
   DEFAULT_ALGORITHM,
   SM2_DEFAULTS,
   FSRS_DEFAULTS,
+  DEFAULT_TAB_SIZE,
+  TAB_SIZE_RANGE,
+  clampTabSize,
   FSRS_WEIGHT_META,
   FSRS_RETENTION,
   cardTypeOptions,
@@ -66,6 +69,7 @@ export async function renderSettings(container, ctx) {
   const sm2p = await loadJsonSetting(ctx, "sm2_params", SM2_DEFAULTS);
   const fsrsp = await loadJsonSetting(ctx, "fsrs_params", FSRS_DEFAULTS);
   const vimOn = (await ctx.api.getSetting("editor_vim")) === "true";
+  const tabSize = parseInt(await ctx.api.getSetting("editor_tab_size"), 10) || DEFAULT_TAB_SIZE;
   const dailyDeck = (await ctx.api.getSetting("daily_deck")) || "";
   const hideNative = (await ctx.api.getSetting("hide_native_decks")) === "true";
   const savedTab = (await ctx.api.getSetting("settings_tab")) || "appearance";
@@ -117,6 +121,14 @@ export async function renderSettings(container, ctx) {
       <div class="panel">
         <div class="muted" style="margin-bottom:8px">Adds VIM keybindings to the syntax-highlighted code answer editor during study. You can also toggle it while answering a question.</div>
         <button type="button" class="btn btn-toggle ${vimOn ? "on" : ""}" id="set-vim">VIM mode in the answer editor</button>
+        <div class="muted" style="margin:12px 0 8px">How far one Tab indents in the answer editor. <b>Shift + Tab</b> outdents by the same amount, and VIM's <code>&lt;&lt;</code> / <code>&gt;&gt;</code> follow it too.</div>
+        <div class="form-grid">
+          <label>Tab width</label>
+          <div class="row">
+            <input type="number" id="set-tab-size" style="width:96px" min="${TAB_SIZE_RANGE.min}" max="${TAB_SIZE_RANGE.max}" step="1" value="${esc(tabSize)}" />
+            <span class="muted-2">spaces</span>
+          </div>
+        </div>
       </div>
       </section>
 
@@ -308,6 +320,13 @@ export async function renderSettings(container, ctx) {
   root.querySelector("#set-vim").addEventListener("click", (e) => {
     const on = e.currentTarget.classList.toggle("on");
     ctx.api.setSetting("editor_vim", on ? "true" : "false");
+    ctx.toast("Editor setting saved");
+  });
+  const tabInput = root.querySelector("#set-tab-size");
+  tabInput.addEventListener("change", async () => {
+    const n = clampTabSize(parseInt(tabInput.value, 10));
+    tabInput.value = n;
+    await ctx.api.setSetting("editor_tab_size", String(n));
     ctx.toast("Editor setting saved");
   });
 

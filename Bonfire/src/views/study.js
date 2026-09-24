@@ -1,7 +1,7 @@
 // Study: active-recall testing. A configurable, editable, due-first queue of cards;
 // each card shows a question, you type an answer, reveal + compare, then self-grade (SM-2).
 import { el, esc, langBadge, metaBadges, isDue, enableTab, todayStr, dueLabel } from "../dom.js";
-import { DIFFICULTIES, FAMILIARITY_ORDER, ALL_DECKS, getDifficulty, isFoundation, isRevealOnly, cmMode } from "../constants.js";
+import { DIFFICULTIES, FAMILIARITY_ORDER, ALL_DECKS, getDifficulty, isFoundation, isRevealOnly, cmMode, DEFAULT_TAB_SIZE, clampTabSize } from "../constants.js";
 import { highlightInto } from "../highlight.js";
 import { mdLite } from "../markdown.js";
 import { confirmDialog } from "../components/confirm.js";
@@ -9,6 +9,9 @@ import { syncNow, syncAfterCard } from "../sync.js";
 
 // Whether the CodeMirror answer editor starts in VIM mode (persisted `editor_vim`).
 let vimEnabled = false;
+
+// How far one Tab indents in the answer editor (persisted `editor_tab_size`).
+let tabSize = DEFAULT_TAB_SIZE;
 
 // Card ids referenced by any playbook — used to drop them from normal study when the
 // "exclude playbook cards" toggle is on. Set at the top of renderStudy each time.
@@ -427,6 +430,7 @@ export async function renderStudy(container, ctx, params = {}) {
   playbookIds = ctx.state.playbookCardIds || new Set();
   try {
     vimEnabled = (await ctx.api.getSetting("editor_vim")) === "true";
+  tabSize = clampTabSize(parseInt(await ctx.api.getSetting("editor_tab_size"), 10));
   } catch (_e) {
     /* default off */
   }
@@ -1183,7 +1187,17 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
           viewportMargin: Infinity,
           placeholder: ph,
           keyMap: vimEnabled ? "vim" : "default",
-          extraKeys: { "Ctrl-Enter": submit },
+          // One setting drives both directions and VIM's << / >>, which all read
+          // indentUnit. indentWithTabs stays off so the width is what you asked for
+          // rather than whatever renders a tab character.
+          indentUnit: tabSize,
+          tabSize,
+          indentWithTabs: false,
+          extraKeys: {
+            "Ctrl-Enter": submit,
+            Tab: (editor) => editor.execCommand("indentMore"),
+            "Shift-Tab": (editor) => editor.execCommand("indentLess"),
+          },
         });
         const vimToggle = answerArea.querySelector("#vim-toggle");
         vimToggle.addEventListener("change", async () => {
@@ -1198,7 +1212,7 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
         });
         setTimeout(() => cm.focus(), 0);
       } else {
-        enableTab(ta);
+        enableTab(ta, tabSize);
         ta.addEventListener("keydown", (e) => {
           if (e.ctrlKey && e.key === "Enter") {
             e.preventDefault();

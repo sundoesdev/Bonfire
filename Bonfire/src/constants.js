@@ -285,6 +285,15 @@ export const FSRS_WEIGHT_META = [
 // in fsrs.rs. See FSRS_RETENTION_HELP for the copy shown beside it.
 export const FSRS_RETENTION = { min: 0.9, max: 0.99, step: 0.01, default: 0.9 };
 
+// ---- Answer editor ----
+// How far one Tab indents in the study answer editor, and the bounds a user may
+// set it to. Device-local (like `editor_vim`) — it is a per-machine preference,
+// not something to push at your other devices through the vault.
+export const DEFAULT_TAB_SIZE = 4;
+export const TAB_SIZE_RANGE = { min: 1, max: 16 };
+export const clampTabSize = (n) =>
+  Number.isFinite(n) ? Math.min(TAB_SIZE_RANGE.max, Math.max(TAB_SIZE_RANGE.min, Math.round(n))) : DEFAULT_TAB_SIZE;
+
 // ---- Media attachments ----
 // Cards can carry inline image/audio attachments (base64 data-URLs) on either
 // the question or the answer side, orthogonal to card_type. See models.rs MediaItem.

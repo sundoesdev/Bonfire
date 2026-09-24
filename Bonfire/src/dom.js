@@ -1,5 +1,5 @@
 // Tiny DOM helpers for the vanilla frontend.
-import { langColor, difficultyColor, getDifficulty, isFoundation } from "./constants.js";
+import { langColor, difficultyColor, getDifficulty, isFoundation, DEFAULT_TAB_SIZE } from "./constants.js";
 
 // Build a single element from an HTML string.
 export function el(html) {
@@ -76,14 +76,29 @@ export function clear(node) {
   while (node.firstChild) node.removeChild(node.firstChild);
 }
 
-// Make Tab insert a tab character in a textarea instead of moving focus.
-export function enableTab(textarea) {
+// Make Tab indent inside a textarea instead of moving focus, and Shift+Tab outdent
+// by the same width. Mirrors what the CodeMirror answer editor does, so the two
+// don't disagree about what a Tab is.
+export function enableTab(textarea, size = DEFAULT_TAB_SIZE) {
   textarea.addEventListener("keydown", (e) => {
     if (e.key !== "Tab") return;
     e.preventDefault();
     const { selectionStart: a, selectionEnd: b, value } = textarea;
-    textarea.value = value.slice(0, a) + "\t" + value.slice(b);
-    textarea.selectionStart = textarea.selectionEnd = a + 1;
+    if (!e.shiftKey) {
+      const pad = " ".repeat(size);
+      textarea.value = value.slice(0, a) + pad + value.slice(b);
+      textarea.selectionStart = textarea.selectionEnd = a + pad.length;
+      return;
+    }
+    // Outdent: strip up to `size` leading spaces from the caret's own line.
+    const lineStart = value.lastIndexOf("\n", a - 1) + 1;
+    const indent = value.slice(lineStart).match(/^ */)[0].length;
+    const drop = Math.min(size, indent);
+    if (!drop) return;
+    textarea.value = value.slice(0, lineStart) + value.slice(lineStart + drop);
+    const move = (pos) => Math.max(lineStart, pos - drop);
+    textarea.selectionStart = move(a);
+    textarea.selectionEnd = move(b);
   });
 }
 
