@@ -653,6 +653,25 @@ textarea { resize: vertical; }
   margin-bottom: 12px;
 }
 .form-grid label { color: var(--muted-2); text-align: right; }
+/* One tunable parameter per row: name + explanation, a bounded input, a reset.
+   Used by the FSRS knobs, which are too many and too opaque for a bare grid. */
+.param-row {
+  display: grid;
+  grid-template-columns: 1fr 96px auto;
+  gap: 10px;
+  align-items: start;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.param-row:last-of-type { border-bottom: none; }
+.param-head label { display: block; font-weight: 500; margin-bottom: 2px; cursor: pointer; }
+.param-help { color: var(--muted-2); font-size: 12px; line-height: 1.45; }
+.param-input { width: 100%; font-family: var(--font-mono); }
+.param-reset { align-self: start; padding: 4px 10px; font-size: 11px; }
+@media (max-width: 720px) {
+  .param-row { grid-template-columns: 1fr auto; }
+  .param-head { grid-column: 1 / -1; }
+}
 .code-block, .code-editor {
   background: var(--code-bg);
   border: 1px solid var(--glass-border);
