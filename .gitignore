@@ -1,6 +1,32 @@
-# Claude Code
+# Working notes and AI-generated scratch. None of this is the project — it is the
+# conversation around it. The repo keeps what a user or contributor needs:
+# README.md, LICENSE, install.sh / uninstall.sh, docs/, and the source.
 CLAUDE.md
+CLAUDE.local.md
 RECAP.md
+RECAP*.md
+TESTING_NOTES/
+HEARTH_OVERHAUL/
+.claude/
+*.plan.md
 
-# Local vault backups — these are real study databases, never commit them.
+# Study data. These are real cards and review history, not source, and they are
+# a privacy matter on a public remote.
+CARD_EXPORT/
+SHARD_EXPORT/
 backups/
+*.db
+*.db-wal
+*.db-shm
+*.bak
+vault.db.bak-*
+
+# Build output and dependencies
+node_modules/
+target/
+dist/
+
+# Editor and OS cruft
+.DS_Store
+*.swp
+*~

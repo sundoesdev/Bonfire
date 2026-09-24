@@ -796,6 +796,10 @@ textarea { resize: vertical; }
 /* Keyboard hint chip on the Submit button. */
 .kbd { font-size: 10.5px; background: rgba(255,255,255,0.22); border-radius: 5px; padding: 2px 6px; font-family: var(--font-mono); margin-left: 4px; }
 .full-width { width: 100%; }
+/* Submit sits bottom-right at a fixed size rather than spanning the card — it is
+   confirmation, not the main event, and Ctrl+Enter is the real path anyway. */
+.controls-end { display: flex; justify-content: flex-end; margin-top: 10px; }
+.btn-submit { width: 190px; justify-content: center; }
 
 /* ---- Modal (Quick Capture) ---- */
 #modal-root:empty { display: none; }

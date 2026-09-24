@@ -1130,7 +1130,8 @@ function runSession(container, ctx, cfg, queue, opts = {}) {
       answerArea.innerHTML = `
         ${useCM ? `<label class="editor-vim-toggle"><input type="checkbox" id="vim-toggle" ${vimEnabled ? "checked" : ""}/> <span>VIM mode</span></label>` : ""}
         <textarea class="code-editor" id="type-answer" spellcheck="false" placeholder="${esc(ph)}"></textarea>`;
-      controls.innerHTML = '<button class="btn btn-primary full-width" id="submit">Submit <span class="kbd">Ctrl + Enter</span></button>';
+      controls.innerHTML =
+        '<div class="controls-end"><button class="btn btn-primary btn-submit" id="submit">Submit <span class="kbd">Ctrl + Enter</span></button></div>';
       const ta = answerArea.querySelector("#type-answer");
       const getValue = () => (cm ? cm.getValue() : ta.value);
       const submit = () => showReveal(getValue());
